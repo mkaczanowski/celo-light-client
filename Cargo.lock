@@ -269,7 +269,7 @@ checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 [[package]]
 name = "bls-crypto"
 version = "0.2.0"
-source = "git+https://github.com/celo-org/celo-bls-snark-rs.git#11875ab4829711b21b264eeddd1c0e70f7e31609"
+source = "git+https://github.com/mkaczanowski/celo-bls-snark-rs?branch=float_free_hash_length_fn#5410a7505e6c9532d461d77a67431fe9dd544266"
 dependencies = [
  "algebra",
  "bench-utils",
@@ -1484,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "num-bigint"
 version = "0.3.1"
-source = "git+https://github.com/janmarthedal/num-bigint.git#d95583c6ea97d809be571dfa3141bc5918a0f99d"
+source = "git+https://github.com/rust-num/num-bigint#72810a5cd38470891448837ef504d05713a93db4"
 dependencies = [
  "autocfg 1.0.1",
  "num-integer",

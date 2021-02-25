@@ -13,13 +13,14 @@ hex = { version = "0.4", default-features = false }
 num = { version = "0.3", default-features = false }
 rlp = { version = "0.4.6", default-features = false, features = ["std"] }
 sha3 = { version = "0.9.1", default-features = false }
-# FIXME: once https://github.com/rust-num/num-bigint/issues/172
-# is merged we should switch to main crate
-num-bigint = { git = "https://github.com/janmarthedal/num-bigint.git", default-features = false }
+# FIXME: once the new release is published with https://github.com/rust-num/num-bigint/issues/172 included
+# we should switch to release tag rather than pulling from master
+num-bigint = { git = "https://github.com/rust-num/num-bigint", default-features = false }
 num-traits = { version = "0.2.14", default-features = false }
 anomaly = { version = "0.2.0", default-features = false }
 thiserror = { version = "1.0.23", default-features = false }
-bls-crypto = { git = "https://github.com/celo-org/celo-bls-snark-rs.git", default-features = true }
+# FIXME: waiting for https://github.com/celo-org/celo-bls-snark-rs/pull/209 to be merged
+bls-crypto = { git = "https://github.com/mkaczanowski/celo-bls-snark-rs", branch = "float_free_hash_length_fn", default-features = true }
 algebra = { git = "https://github.com/celo-org/zexe", default-features = false }
 
 # storage deps

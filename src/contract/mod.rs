@@ -85,7 +85,7 @@ pub(crate) fn init<S: Storage, A: Api, Q: Querier>(
     let mut state = State::from_entry(last_state_entry, storage);
 
     // Ingest new header
-    match state.insert_header(&header, false) { // TODO: we should validate new header (wasm isssue)
+    match state.insert_header(&header, true) {
         Err(e) => return Err(StdError::GenericErr {
             msg: format!("Unable to ingest header. Error: {}", e),
             backtrace: None,
@@ -220,7 +220,7 @@ fn try_block<S: Storage, A: Api, Q: Querier>(
     };
 
     // Ingest new header
-    match state.insert_header(&header, false) {
+    match state.insert_header(&header, true) {
         Err(e) => return Err(StdError::GenericErr {
             msg: format!("Unable to ingest header (update call). Error: {}", e),
             backtrace: None,
