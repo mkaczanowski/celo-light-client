@@ -2,7 +2,7 @@ use crate::algebra::CanonicalDeserialize;
 use crate::types::header::Hash;
 use crate::types::istanbul::{IstanbulAggregatedSeal, IstanbulMsg};
 use crate::istanbul::min_quorum_size;
-use crate::state::Validator;
+use crate::types::state::Validator;
 use crate::errors::{Error, Kind};
 use crate::serialization::rlp::big_int_to_rlp_compat_bytes;
 use num_bigint::BigInt as Integer;

@@ -36,6 +36,15 @@ pub enum Kind {
     #[error("encountered a block with time set in the future")]
     FutureBlock,
 
+    #[error("key not found")]
+    KeyNotFound,
+
+    #[error("db error")]
+    DbError,
+
+    #[error("generic serialization error")]
+    GenericSerializationError,
+
     #[error("unkown error occurred")]
     Unknown,
 }

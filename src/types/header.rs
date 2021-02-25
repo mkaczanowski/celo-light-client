@@ -1,6 +1,6 @@
 use crate::istanbul::istanbul_filtered_header;
 use crate::types::istanbul::ISTANBUL_EXTRA_VANITY_LENGTH;
-use crate::traits::{DefaultFrom, FromBytes};
+use crate::traits::{DefaultFrom, FromBytes, ToRlp, FromRlp};
 use crate::serialization::rlp::{rlp_list_field_from_bytes, rlp_to_big_int, big_int_to_rlp_compat_bytes};
 use crate::slice_as_array_ref;
 use crate::errors::{Kind, Error};
@@ -83,17 +83,6 @@ impl Header {
         }
     }
 
-    pub fn from_rlp(bytes: &[u8]) -> Result<Self, Error>{
-        match rlp::decode(&bytes) {
-            Ok(header) => Ok(header),
-            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
-        }
-    }
-
-    pub fn to_rlp(&self) -> Vec<u8> {
-        rlp::encode(self)
-    }
-
     pub fn hash(&self) -> Result<Hash, Error> {
         if self.extra.len() >= ISTANBUL_EXTRA_VANITY_LENGTH {
             let istanbul_header = istanbul_filtered_header(&self, true);
@@ -103,6 +92,21 @@ impl Header {
         }
 
         rlp_hash(self)
+    }
+}
+
+impl FromRlp for Header {
+    fn from_rlp(bytes: &[u8]) -> Result<Self, Error>{
+        match rlp::decode(&bytes) {
+            Ok(header) => Ok(header),
+            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
+        }
+    }
+}
+
+impl ToRlp for Header {
+    fn to_rlp(&self) -> Vec<u8> {
+        rlp::encode(self)
     }
 }
 

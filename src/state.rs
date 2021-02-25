@@ -1,119 +1,27 @@
-use crate::types::header::{Header, Hash, Address};
-use crate::types::istanbul::{IstanbulExtra, SerializedPublicKey};
+use crate::types::header::{Header, Address};
+use crate::types::istanbul::IstanbulExtra;
+use crate::types::state::{Validator, StateEntry};
 use crate::errors::{Error, Kind};
 use crate::bls::verify_aggregated_seal;
-use crate::traits::Storage;
+use crate::traits::{ToRlp, FromRlp, Storage};
 use crate::istanbul::{is_last_block_of_epoch, get_epoch_number};
-use crate::serialization::rlp::{rlp_field_from_bytes, rlp_list_field_from_bytes};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use num_bigint::BigInt as Integer;
 use num::cast::ToPrimitive;
 use num_traits::Zero;
-use rlp::{Rlp, Encodable, Decodable, RlpStream, DecoderError};
 
-const LAST_ENTRY_HASH_KEY: &str = "last_entry_hash";
+const LAST_ENTRY_KEY: &str = "last_entry";
 
 const ALLOWED_CLOCK_SKEW: u64 = 5;
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub struct Validator{
-    #[serde(with = "crate::serialization::bytes::hexstring")]
-    pub address: Address,
-
-    #[serde(with = "crate::serialization::bytes::hexstring")]
-    pub public_key: SerializedPublicKey,
-}
-
-impl Encodable for Validator {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(2);
-
-        s.append(&self.address.as_ref());
-        s.append(&self.public_key.as_ref());
-    }
-}
-
-impl Decodable for Validator {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-            Ok(Validator{
-                address: rlp_field_from_bytes(&rlp.at(0)?)?,
-                public_key: rlp_field_from_bytes(&rlp.at(1)?)?
-            })
-        }
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-struct StateEntry {
-    pub validators: Vec<Validator>, // set of authorized validators at this moment
-    pub epoch: u64, // the number of blocks for each epoch
-    pub number: u64, // block number where the snapshot was created
-    pub hash: Hash, // block hash where the snapshot was created
-}
-
-impl Encodable for StateEntry {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(4);
-
-        s.begin_list(self.validators.len());
-        for validator in self.validators.iter() {
-            s.append(validator);
-        }
-
-        s.append(&self.epoch);
-        s.append(&self.number);
-        s.append(&self.hash.as_ref());
-    }
-}
-
-impl Decodable for StateEntry {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-            let validators: Result<Vec<Validator>, DecoderError> = rlp
-                .at(0)?
-                .iter()
-                .map(|r| {
-                    r.as_val()
-                })
-                .collect();
-
-            Ok(StateEntry{
-                validators: validators?,
-                epoch: rlp.val_at(1)?,
-                number: rlp.val_at(2)?,
-                hash: rlp_list_field_from_bytes(rlp, 3)?,
-            })
-        }
-}
-
-impl StateEntry {
-    pub fn new() -> Self {
-        Self {
-            validators: Vec::new(),
-            epoch: 0,
-            number: 0,
-            hash: Hash::default()
-        }
-    }
-
-    pub fn to_rlp(&self) -> Vec<u8> {
-        rlp::encode(self)
-    }
-
-    pub fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
-        match rlp::decode(bytes) {
-            Ok(data) => Ok(data),
-            Err(e) => Err(Kind::RlpDecodeError.context(e).into())
-        }
-    }
-}
-
-pub struct State {
-    storage: Box<dyn Storage>,
+pub struct State<S: Storage> {
+    storage: Box<S>,
     entry: StateEntry,
 }
 
-impl State {
-    pub fn new(epoch: u64, storage: Box<dyn Storage>) -> Self {
+impl<S: Storage> State<S> {
+    pub fn new(epoch: u64, storage: Box<S>) -> Self {
         let mut entry = StateEntry::new();
         entry.epoch = epoch;
         
@@ -123,13 +31,30 @@ impl State {
         }
     }
 
+    pub fn from_entry(entry: StateEntry, storage: Box<S>) -> Self {
+        // NOTE: This method doesn't update the storage
+        State {
+            storage,
+            entry
+        }
+    }
+
+    pub fn storage(&self) -> &Box<S> {
+        &self.storage
+    }
+
+    pub fn entry(&self) -> &StateEntry {
+        &self.entry 
+    }
+
     pub fn restore(&mut self) -> Result <u64, Error> {
-        let last_hash = self.storage.get(LAST_ENTRY_HASH_KEY.as_bytes())?;
-        let bytes = self.storage.get(&last_hash)?;
+        let bytes = self.storage.get(LAST_ENTRY_KEY.as_bytes())?;
 
         self.entry = StateEntry::from_rlp(&bytes)?;
 
-        Ok(get_epoch_number(self.entry.number, self.entry.epoch))
+        // TODO: not sure exactly why +2 (likely genesis-skip and +1 for next epoch - to avoid
+        // adding the same one)
+        Ok(get_epoch_number(self.entry.number, self.entry.epoch)+2)
     }
 
     pub fn add_validators(&mut self, validators: Vec<Validator>) -> bool {
@@ -192,17 +117,27 @@ impl State {
         )
     }
 
+    pub fn insert_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
+        let block_num = header.number.to_u64().unwrap();
+
+        if is_last_block_of_epoch(block_num, self.entry.epoch) {
+            // The validator set is about to be updated with epoch header
+            self.insert_epoch_header(header, verify)
+        } else {
+            // The validator set is not changing, so we update the latest header number and hash
+            let entry = StateEntry {
+                validators: self.entry.validators.clone(),
+                epoch: self.entry.epoch,
+                number: block_num,
+                hash: header.hash()?,
+            };
+            self.update_state_entry(entry)
+        }
+    }
+
     pub fn insert_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
         if !is_last_block_of_epoch(header.number.to_u64().unwrap(), self.entry.epoch) {
             return Err(Kind::InvalidChainInsertion.into());
-        }
-
-        // check if header is stored in the storage. If so, then update current validator set
-        let key = header.hash()?;
-        if self.storage.contains_key(&key)? {
-            let entry = self.storage.get(&key)?;
-            self.entry = StateEntry::from_rlp(&entry)?;
-            return Ok(());
         }
 
         self.store_epoch_header(header, verify)
@@ -244,26 +179,25 @@ impl State {
         let entry = StateEntry {
             validators: self.entry.validators.clone(),
             epoch: self.entry.epoch,
-            number: self.entry.number + self.entry.epoch,
+            number: header.number.to_u64().unwrap(),
             hash: header_hash
         };
 
-        let rlp_vec = entry.to_rlp();
+        self.update_state_entry(entry)
+    }
 
-        // store header by it's number
+    fn update_state_entry(&mut self, entry: StateEntry) -> Result<(), Error> {
+        // NOTE: right now we store only the last state entry but we could add
+        // a feature to store X past entries for querying / debugging
+
+        // update last entry marker
         self.storage.put(
-            entry.hash.as_ref(),
-            rlp_vec.as_ref(),
+            LAST_ENTRY_KEY.as_bytes(),
+            self.entry.to_rlp().as_ref(),
         )?;
 
         // update local state
         self.entry = entry;
-
-        // update last entry marker
-        self.storage.put(
-            LAST_ENTRY_HASH_KEY.as_bytes(),
-            self.entry.hash.as_ref()
-        )?;
 
         Ok(())
     }
@@ -276,7 +210,8 @@ mod tests {
     use sha3::{Digest, Keccak256};
     use secp256k1::{rand::rngs::OsRng, Secp256k1, PublicKey, SecretKey};
     use crate::traits::{FromBytes, DefaultFrom};
-    use crate::types::header::ADDRESS_LENGTH;
+    use crate::types::header::{Hash, ADDRESS_LENGTH};
+    use crate::types::istanbul::SerializedPublicKey;
 
     macro_rules! string_vec {
         ($($x:expr),*) => (vec![$($x.to_string()),*]);
@@ -331,6 +266,30 @@ mod tests {
 
             pubkey_to_address(self.accounts.get(&account).unwrap().1)
         }
+    }
+
+    #[test]
+    fn test_encode_state_entry() {
+        let entry = StateEntry {
+            validators: vec![
+                Validator{
+                    address: Address::default(),
+                    public_key: SerializedPublicKey::default(),
+                },
+                Validator{
+                    address: Address::default(),
+                    public_key: SerializedPublicKey::default(),
+                }
+            ],
+            epoch: 123,
+            number: 456,
+            hash: Hash::default()
+        };
+
+        let encoded = rlp::encode(&entry);
+        let decoded = StateEntry::from_rlp(&encoded).unwrap();
+        
+        assert_eq!(entry, decoded);
     }
 
     #[test]

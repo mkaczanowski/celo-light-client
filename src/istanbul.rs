@@ -64,7 +64,9 @@ pub fn is_last_block_of_epoch(number: u64, epoch_size: u64) -> bool {
 }
 
 pub fn min_quorum_size(total_validators: usize) -> usize {
-    return ((2.0*(total_validators as f64) / 3.0) as f64).ceil() as usize
+    // non-float equivalent of:
+    //  ((2.0*(total_validators as f64) / 3.0) as f64).ceil() as usize
+    ((2*total_validators) - 1 + 3)/3
 }
 
 #[cfg(test)]
