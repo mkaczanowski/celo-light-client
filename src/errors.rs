@@ -33,9 +33,6 @@ pub enum Kind {
     #[error("BLS invalid public key")]
     BlsInvalidPublicKey,
 
-    #[error("JSON serialization issue")]
-    JsonSerializationIssue,
-
     #[error("encountered a block with time set in the future")]
     FutureBlock,
 

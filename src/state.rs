@@ -4,11 +4,13 @@ use crate::errors::{Error, Kind};
 use crate::bls::verify_aggregated_seal;
 use crate::traits::Storage;
 use crate::istanbul::{is_last_block_of_epoch, get_epoch_number};
+use crate::serialization::rlp::{rlp_field_from_bytes, rlp_list_field_from_bytes};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use num_bigint::BigInt as Integer;
 use num::cast::ToPrimitive;
 use num_traits::Zero;
+use rlp::{Rlp, Encodable, Decodable, RlpStream, DecoderError};
 
 const LAST_ENTRY_HASH_KEY: &str = "last_entry_hash";
 
@@ -23,12 +25,64 @@ pub struct Validator{
     pub public_key: SerializedPublicKey,
 }
 
+impl Encodable for Validator {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(2);
+
+        s.append(&self.address.as_ref());
+        s.append(&self.public_key.as_ref());
+    }
+}
+
+impl Decodable for Validator {
+        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+            Ok(Validator{
+                address: rlp_field_from_bytes(&rlp.at(0)?)?,
+                public_key: rlp_field_from_bytes(&rlp.at(1)?)?
+            })
+        }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 struct StateEntry {
     pub validators: Vec<Validator>, // set of authorized validators at this moment
     pub epoch: u64, // the number of blocks for each epoch
     pub number: u64, // block number where the snapshot was created
     pub hash: Hash, // block hash where the snapshot was created
+}
+
+impl Encodable for StateEntry {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(4);
+
+        s.begin_list(self.validators.len());
+        for validator in self.validators.iter() {
+            s.append(validator);
+        }
+
+        s.append(&self.epoch);
+        s.append(&self.number);
+        s.append(&self.hash.as_ref());
+    }
+}
+
+impl Decodable for StateEntry {
+        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+            let validators: Result<Vec<Validator>, DecoderError> = rlp
+                .at(0)?
+                .iter()
+                .map(|r| {
+                    r.as_val()
+                })
+                .collect();
+
+            Ok(StateEntry{
+                validators: validators?,
+                epoch: rlp.val_at(1)?,
+                number: rlp.val_at(2)?,
+                hash: rlp_list_field_from_bytes(rlp, 3)?,
+            })
+        }
 }
 
 impl StateEntry {
@@ -41,17 +95,14 @@ impl StateEntry {
         }
     }
 
-    pub fn from_json(bytes: &[u8]) -> Result<Self, Error> {
-        match serde_json::from_slice(&bytes) {
-            Ok(entry) => Ok(entry),
-            Err(e) => Err(Kind::JsonSerializationIssue.context(e).into())
-        }
+    pub fn to_rlp(&self) -> Vec<u8> {
+        rlp::encode(self)
     }
 
-    pub fn to_json(&self) -> Result<String, Error> {
-        match serde_json::to_string(&self) {
+    pub fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
+        match rlp::decode(bytes) {
             Ok(data) => Ok(data),
-            Err(e) => Err(Kind::JsonSerializationIssue.context(e).into())
+            Err(e) => Err(Kind::RlpDecodeError.context(e).into())
         }
     }
 }
@@ -76,7 +127,7 @@ impl State {
         let last_hash = self.storage.get(LAST_ENTRY_HASH_KEY.as_bytes())?;
         let bytes = self.storage.get(&last_hash)?;
 
-        self.entry = StateEntry::from_json(&bytes)?;
+        self.entry = StateEntry::from_rlp(&bytes)?;
 
         Ok(get_epoch_number(self.entry.number, self.entry.epoch))
     }
@@ -150,7 +201,7 @@ impl State {
         let key = header.hash()?;
         if self.storage.contains_key(&key)? {
             let entry = self.storage.get(&key)?;
-            self.entry = StateEntry::from_json(&entry)?;
+            self.entry = StateEntry::from_rlp(&entry)?;
             return Ok(());
         }
 
@@ -197,12 +248,12 @@ impl State {
             hash: header_hash
         };
 
-        let json_string = entry.to_json()?;
+        let rlp_vec = entry.to_rlp();
 
         // store header by it's number
         self.storage.put(
             entry.hash.as_ref(),
-            json_string.as_ref(),
+            rlp_vec.as_ref(),
         )?;
 
         // update local state

@@ -8,15 +8,11 @@ pub mod macros;
 pub mod errors;
 
 #[macro_use]
-extern crate serde_derive;
-
-#[macro_use]
-extern crate serde_json;
+extern crate serde;
 
 extern crate rlp;
 extern crate num_bigint;
 extern crate sha3;
-extern crate secp256k1;
 extern crate bls_crypto;
 extern crate algebra;
 extern crate anomaly;
