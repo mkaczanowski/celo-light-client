@@ -45,6 +45,7 @@ pub use traits::{
     FromBytes,
     DefaultFrom,
     ToRlp,
+    FromRlp
 };
 
 pub use contract::*;
@@ -54,41 +55,4 @@ pub use contract::*;
 /// contract module.
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{handle, init, query};
-
-#[cfg(target_arch = "wasm32")]
-mod wasm {
-    use super::contract;
-    use cosmwasm_std::{
-        do_handle, do_init, do_query, ExternalApi, ExternalQuerier, ExternalStorage,
-    };
-
-    /// WASM Entry point for contract::init
-    #[no_mangle]
-    pub extern "C" fn init(env_ptr: u32, msg_ptr: u32) -> u32 {
-        do_init(
-            &contract::init::<ExternalStorage, ExternalApi, ExternalQuerier>,
-            env_ptr,
-            msg_ptr,
-        )
-    }
-
-    /// WASM Entry point for contract::handle
-    #[no_mangle]
-    pub extern "C" fn handle(env_ptr: u32, msg_ptr: u32) -> u32 {
-        do_handle(
-            &contract::handle::<ExternalStorage, ExternalApi, ExternalQuerier>,
-            env_ptr,
-            msg_ptr,
-        )
-    }
-
-    /// WASM Entry point for contract::query
-    #[no_mangle]
-    pub extern "C" fn query(msg_ptr: u32) -> u32 {
-        do_query(
-            &contract::query::<ExternalStorage, ExternalApi, ExternalQuerier>,
-            msg_ptr,
-        )
-    }
-}
+cosmwasm_std::create_entry_points!(contract);
