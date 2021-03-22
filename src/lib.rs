@@ -11,10 +11,6 @@ pub mod contract;
 #[macro_use]
 extern crate serde;
 
-#[macro_use]
-extern crate parity_scale_codec;
-extern crate parity_scale_codec_derive;
-
 extern crate rlp;
 extern crate num_bigint;
 extern crate sha3;
@@ -32,6 +28,7 @@ pub use types::{
     istanbul::IstanbulExtra,
     state::Validator,
     state::StateEntry,
+    state::StateConfig
 };
 pub use istanbul::{
     get_epoch_number,

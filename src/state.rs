@@ -1,9 +1,8 @@
 use crate::types::header::{Header, Address};
 use crate::types::istanbul::IstanbulExtra;
-use crate::types::state::{Validator, StateEntry};
+use crate::types::state::{Validator, StateEntry, StateConfig};
 use crate::errors::{Error, Kind};
 use crate::bls::verify_aggregated_seal;
-use crate::traits::{ToRlp, FromRlp, Storage};
 use crate::istanbul::{is_last_block_of_epoch, get_epoch_number};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
@@ -11,50 +10,28 @@ use num_bigint::BigInt as Integer;
 use num::cast::ToPrimitive;
 use num_traits::Zero;
 
-const LAST_ENTRY_KEY: &str = "last_entry";
-
-const ALLOWED_CLOCK_SKEW: u64 = 5;
-
-pub struct State<S: Storage> {
-    storage: Box<S>,
+pub struct State {
     entry: StateEntry,
+    config: StateConfig,
 }
 
-impl<S: Storage> State<S> {
-    pub fn new(epoch: u64, storage: Box<S>) -> Self {
-        let mut entry = StateEntry::new();
-        entry.epoch = epoch;
-        
+impl State {
+    pub fn new(config: StateConfig) -> Self {
         State {
-            storage,
-            entry
+            entry: StateEntry::new(),
+            config
         }
     }
 
-    pub fn from_entry(entry: StateEntry, storage: Box<S>) -> Self {
-        // NOTE: This method doesn't update the storage
+    pub fn from_entry(entry: StateEntry, config: StateConfig) -> Self {
         State {
-            storage,
-            entry
+            entry,
+            config
         }
-    }
-
-    pub fn storage(&self) -> &Box<S> {
-        &self.storage
     }
 
     pub fn entry(&self) -> &StateEntry {
         &self.entry 
-    }
-
-    pub fn restore(&mut self) -> Result <u64, Error> {
-        let bytes = self.storage.get(LAST_ENTRY_KEY.as_bytes())?;
-
-        self.entry = StateEntry::from_rlp(&bytes)?;
-
-        // TODO: not sure exactly why +2 (likely genesis-skip and +1 for next epoch - to avoid
-        // adding the same one)
-        Ok(get_epoch_number(self.entry.number, self.entry.epoch)+2)
     }
 
     pub fn add_validators(&mut self, validators: Vec<Validator>) -> bool {
@@ -100,15 +77,19 @@ impl<S: Storage> State<S> {
         let header_hash = header.hash()?;
         let extra = IstanbulExtra::from_rlp(&header.extra)?;
 
-        let curr_time = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(t) => t.as_secs(),
-            Err(e) => return Err(Kind::Unknown.context(e).into()),
-        };
+        // NOTE: This doesn't work in WASM
+        //   https://github.com/rust-lang/rust/issues/48564
+        if self.config.verify_header_timestamp {
+            let curr_time = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(t) => t.as_secs(),
+                Err(e) => return Err(Kind::Unknown.context(e).into()),
+            };
 
-	// don't waste time checking blocks from the future
-	if header.time > curr_time + ALLOWED_CLOCK_SKEW {
-            return Err(Kind::FutureBlock.into())
-	}
+            // don't waste time checking blocks from the future
+            if header.time > curr_time + self.config.allowed_clock_skew {
+                return Err(Kind::FutureBlock.into())
+            }
+        }
 
         verify_aggregated_seal(
             header_hash,
@@ -117,40 +98,47 @@ impl<S: Storage> State<S> {
         )
     }
 
-    pub fn insert_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
+    pub fn insert_header(&mut self, header: &Header) -> Result<(), Error> {
         let block_num = header.number.to_u64().unwrap();
 
-        if is_last_block_of_epoch(block_num, self.entry.epoch) {
+        if is_last_block_of_epoch(block_num, self.config.epoch_size) {
             // The validator set is about to be updated with epoch header
-            self.insert_epoch_header(header, verify)
+            self.store_epoch_header(header, self.config.verify_epoch_headers)
         } else {
-            // The validator set is not changing, so we update the latest header number and hash
-            let entry = StateEntry {
-                validators: self.entry.validators.clone(),
-                epoch: self.entry.epoch,
-                number: block_num,
-                hash: header.hash()?,
-            };
-            self.update_state_entry(entry)
+            // Validator set is not being updated
+            self.store_non_epoch_header(header, self.config.verify_epoch_headers)
         }
     }
 
-    pub fn insert_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
-        if !is_last_block_of_epoch(header.number.to_u64().unwrap(), self.entry.epoch) {
-            return Err(Kind::InvalidChainInsertion.into());
-        }
-
-        self.store_epoch_header(header, verify)
-    }
-
-    fn store_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error>{
-        let header_hash = header.hash()?;
-        let extra = IstanbulExtra::from_rlp(&header.extra)?;
-
+    fn store_non_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
         // genesis block is valid dead end
         if verify && !header.number.is_zero() {
             self.verify_header(&header)?
         }
+
+        let extra = IstanbulExtra::from_rlp(&header.extra)?;
+        let entry = StateEntry {
+            // The validator state stays unchanged (ONLY updated with epoch header)
+            validators: self.entry.validators.clone(),
+
+            // Update the header related fields
+            number: header.number.to_u64().unwrap(),
+            timestamp: header.time,
+            hash: header.hash()?,
+            aggregated_seal: extra.aggregated_seal.clone(),
+        };
+
+        self.update_state_entry(entry)
+    }
+
+    fn store_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
+        // genesis block is valid dead end
+        if verify && !header.number.is_zero() {
+            self.verify_header(&header)?
+        }
+
+        let header_hash = header.hash()?;
+        let extra = IstanbulExtra::from_rlp(&header.extra)?;
 
         // convert istanbul validators into a Validator struct
         let mut validators: Vec<Validator> = Vec::new();
@@ -177,10 +165,11 @@ impl<S: Storage> State<S> {
         }
 
         let entry = StateEntry {
-            validators: self.entry.validators.clone(),
-            epoch: self.entry.epoch,
             number: header.number.to_u64().unwrap(),
-            hash: header_hash
+            timestamp: header.time,
+            validators: self.entry.validators.clone(),
+            hash: header_hash,
+            aggregated_seal: extra.aggregated_seal,
         };
 
         self.update_state_entry(entry)
@@ -189,12 +178,6 @@ impl<S: Storage> State<S> {
     fn update_state_entry(&mut self, entry: StateEntry) -> Result<(), Error> {
         // NOTE: right now we store only the last state entry but we could add
         // a feature to store X past entries for querying / debugging
-
-        // update last entry marker
-        self.storage.put(
-            LAST_ENTRY_KEY.as_bytes(),
-            self.entry.to_rlp().as_ref(),
-        )?;
 
         // update local state
         self.entry = entry;
@@ -209,28 +192,12 @@ mod tests {
     use std::{cmp, cmp::Ordering};
     use sha3::{Digest, Keccak256};
     use secp256k1::{rand::rngs::OsRng, Secp256k1, PublicKey, SecretKey};
-    use crate::traits::{FromBytes, DefaultFrom};
+    use crate::traits::{FromBytes, DefaultFrom, FromRlp};
     use crate::types::header::{Hash, ADDRESS_LENGTH};
-    use crate::types::istanbul::SerializedPublicKey;
+    use crate::types::istanbul::{SerializedPublicKey, IstanbulAggregatedSeal};
 
     macro_rules! string_vec {
         ($($x:expr),*) => (vec![$($x.to_string()),*]);
-    }
-
-    struct MockStorage{}
-
-    impl Storage for MockStorage {
-        fn put(&mut self, _key: &[u8], _value: &[u8]) -> Result<Option<Vec<u8>>, Error> {
-            Ok(None)
-        }
-    
-        fn get(&self, _key: &[u8]) -> Result<Vec<u8>, Error> {
-            Ok(Vec::new())
-        }
-    
-        fn contains_key(&self, _key: &[u8]) -> Result<bool, Error> {
-            Ok(false)
-        }
     }
 
     struct TestValidatorSet {
@@ -246,6 +213,17 @@ mod tests {
 
     struct AccountPool {
         pub accounts: HashMap<String, (SecretKey, PublicKey)>,
+    }
+
+    fn state_config() -> StateConfig {
+        StateConfig {
+            epoch_size: 123,
+            allowed_clock_skew: 123,
+
+            verify_epoch_headers: true,
+            verify_non_epoch_headers: true, 
+            verify_header_timestamp: true,
+        }
     }
 
     impl AccountPool {
@@ -281,9 +259,10 @@ mod tests {
                     public_key: SerializedPublicKey::default(),
                 }
             ],
-            epoch: 123,
+            timestamp: 123456,
             number: 456,
-            hash: Hash::default()
+            hash: Hash::default(),
+            aggregated_seal: IstanbulAggregatedSeal::new(),
         };
 
         let encoded = rlp::encode(&entry);
@@ -294,8 +273,7 @@ mod tests {
 
     #[test]
     fn test_add_remove() {
-        let storage = Box::new(MockStorage{});
-        let mut state = State::new(123, storage);
+        let mut state = State::new(state_config());
         let mut result = state.add_validators(vec![
             Validator{
                 address: bytes_to_address(&vec![0x3 as u8]),
@@ -409,9 +387,8 @@ mod tests {
         ];
 
         for test in tests {
-            let storage = Box::new(MockStorage{});
             let mut accounts = AccountPool::new();
-            let mut state = State::new(123, storage);
+            let mut state = State::new(state_config());
 
             let validators = convert_val_names_to_validators(&mut accounts, test.validators);
             state.add_validators(validators.clone());
