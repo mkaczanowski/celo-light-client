@@ -1,24 +1,61 @@
 use crate::traits::FromRlp;
-use cosmwasm_std::StdError;
+use cosmwasm_std::{from_slice, StdError};
+use serde::de::DeserializeOwned;
+use std::fmt::Display;
 
-pub fn from_base64<T>(base64_data: &String, target_type: String) -> Result<T, StdError> where T: FromRlp {
-    let bytes = match base64::decode(base64_data) {
-        Ok(bytes) => bytes,
+pub fn from_base64<S: Into<String>>(
+    base64_data: &String,
+    target_type: S,
+) -> Result<Vec<u8>, StdError> {
+    match base64::decode(base64_data) {
+        Ok(bytes) => Ok(bytes),
         Err(e) => {
             return Err(StdError::ParseErr {
-                target_type,
+                target_type: target_type.into(),
                 msg: format!("Unable to base64 decode data. Error: {}", e),
             })
         }
-    };
+    }
+}
 
-    match T::from_rlp(bytes.as_slice()) {
-        Ok(block) => return Ok(block),
-        Err(e) => {
-            return Err(StdError::ParseErr {
-                target_type,
-                msg: format!("Unable to rlp decode from base64 data. Error: {}", e),
-            })
-        }
-    };
+pub fn from_base64_rlp<T, S>(base64_data: &String, target_type: S) -> Result<T, StdError>
+where
+    T: FromRlp,
+    S: Into<String> + Clone,
+{
+    let bytes = from_base64(&base64_data, target_type.clone())?;
+
+    Ok(T::from_rlp(bytes.as_slice()).map_err(|e| {
+        StdError::parse_err(
+            target_type,
+            format!("Unable to rlp decode from base64 data. Error: {}", e),
+        )
+    })?)
+}
+
+pub fn from_base64_json_slice<T, S>(base64_data: &String, target_type: S) -> Result<T, StdError>
+where
+    T: DeserializeOwned,
+    S: Into<String> + Clone,
+{
+    let bytes = from_base64(base64_data, target_type.clone())?;
+
+    let t: T = from_slice(&bytes).map_err(|e| {
+        StdError::parse_err(
+            target_type,
+            format!("Unable to json decode data. Error: {}", e),
+        )
+    })?;
+
+    Ok(t)
+}
+
+// Util function to convert error to string
+pub fn to_generic_err<T>(err: T) -> StdError
+where
+    T: Display,
+{
+    StdError::GenericErr {
+        msg: err.to_string(),
+    }
 }

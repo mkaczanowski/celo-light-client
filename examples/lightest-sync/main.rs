@@ -16,6 +16,8 @@ use num::cast::ToPrimitive;
 extern crate log;
 use log::{info, error};
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 #[tokio::main]
 async fn main(){
     env_logger::init();
@@ -94,12 +96,13 @@ async fn main(){
 
     // build up state from the genesis block to the latest
     for epoch in first_epoch..current_epoch_number {
+        let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let epoch_block_num = get_epoch_last_block_number(epoch, epoch_size);
         let epoch_block_number_hex = format!("0x{:x}", epoch_block_num);
         let header = relayer.get_block_header_by_number(&epoch_block_number_hex).await;
 
         if header.is_ok() {
-            match state.insert_header(&header.unwrap()) {
+            match state.insert_header(&header.unwrap(), current_timestamp) {
                 Ok(_) => info!("[{}/{}] Inserted epoch header: {}", epoch + 1, current_epoch_number, epoch_block_number_hex),
                 Err(e) => error!("Failed to insert epoch header {}: {}", epoch_block_number_hex, e)
             }
@@ -108,7 +111,8 @@ async fn main(){
         }
     }
 
-    match state.verify_header(&current_block_header) {
+    let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    match state.verify_header(&current_block_header, current_timestamp) {
         Ok(_) => info!("Succesfully validated latest header against local state: {}", current_block_header.number),
         Err(e) => error!("Failed to validate latest header against local state: {}", e)
     }

@@ -4,7 +4,6 @@ use crate::types::state::{Validator, StateEntry, StateConfig};
 use crate::errors::{Error, Kind};
 use crate::bls::verify_aggregated_seal;
 use crate::istanbul::{is_last_block_of_epoch, get_epoch_number};
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use num_bigint::BigInt as Integer;
 use num::cast::ToPrimitive;
@@ -73,23 +72,36 @@ impl State {
         return true;
     }
 
-    pub fn verify_header(&self, header: &Header) -> Result<(), Error> {
-        let header_hash = header.hash()?;
-        let extra = IstanbulExtra::from_rlp(&header.extra)?;
+    pub fn verify_header(&self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
+        // assert header height is newer than any we know
+        if !(header.number.to_u64().unwrap() > self.entry.number) {
+            return Err(Kind::HeaderVerificationError {
+                msg: "header height should be greater than the last one stored in state"
+            }.into());
+        }
 
-        // NOTE: This doesn't work in WASM
-        //   https://github.com/rust-lang/rust/issues/48564
         if self.config.verify_header_timestamp {
-            let curr_time = match SystemTime::now().duration_since(UNIX_EPOCH) {
-                Ok(t) => t.as_secs(),
-                Err(e) => return Err(Kind::Unknown.context(e).into()),
-            };
+            // assert header timestamp is past current timestamp
+            if !(header.time > self.entry.timestamp) {
+                return Err(Kind::HeaderVerificationError {
+                    msg: "header timestamp should be greater than the last one stored in state"
+                }.into());
+            }
 
             // don't waste time checking blocks from the future
-            if header.time > curr_time + self.config.allowed_clock_skew {
-                return Err(Kind::FutureBlock.into())
+            if header.time > current_timestamp + self.config.allowed_clock_skew {
+                return Err(Kind::HeaderVerificationError {
+                    msg: "header timestamp is set too far in the future"
+                }.into());
             }
         }
+        
+        self.verify_header_seal(&header)
+    }
+
+    pub fn verify_header_seal(&self, header: &Header) -> Result<(), Error> {
+        let header_hash = header.hash()?;
+        let extra = IstanbulExtra::from_rlp(&header.extra)?;
 
         verify_aggregated_seal(
             header_hash,
@@ -98,22 +110,22 @@ impl State {
         )
     }
 
-    pub fn insert_header(&mut self, header: &Header) -> Result<(), Error> {
+    pub fn insert_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         let block_num = header.number.to_u64().unwrap();
 
         if is_last_block_of_epoch(block_num, self.config.epoch_size) {
             // The validator set is about to be updated with epoch header
-            self.store_epoch_header(header, self.config.verify_epoch_headers)
+            self.store_epoch_header(header, current_timestamp)
         } else {
             // Validator set is not being updated
-            self.store_non_epoch_header(header, self.config.verify_epoch_headers)
+            self.store_non_epoch_header(header, current_timestamp)
         }
     }
 
-    fn store_non_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
+    fn store_non_epoch_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         // genesis block is valid dead end
-        if verify && !header.number.is_zero() {
-            self.verify_header(&header)?
+        if self.config.verify_non_epoch_headers && !header.number.is_zero() {
+            self.verify_header(&header, current_timestamp)?
         }
 
         let extra = IstanbulExtra::from_rlp(&header.extra)?;
@@ -131,10 +143,10 @@ impl State {
         self.update_state_entry(entry)
     }
 
-    fn store_epoch_header(&mut self, header: &Header, verify: bool) -> Result<(), Error> {
+    fn store_epoch_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         // genesis block is valid dead end
-        if verify && !header.number.is_zero() {
-            self.verify_header(&header)?
+        if self.config.verify_epoch_headers && !header.number.is_zero() {
+            self.verify_header(&header, current_timestamp)?
         }
 
         let header_hash = header.hash()?;

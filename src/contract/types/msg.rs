@@ -1,5 +1,8 @@
+use crate::contract::types::ibc::{Channel, ConnectionEnd, Height, MerklePrefix};
+use crate::contract::types::wasm::{
+    ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour, WasmHeader,
+};
 use crate::types::header::Hash;
-use crate::contract::types::wasm::{WasmHeader, ConsensusState, ClientState, Misbehaviour, ClientStateCallResponseResult};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -13,25 +16,122 @@ pub enum HandleMsg {
     CheckHeaderAndUpdateState {
         header: WasmHeader,
         consensus_state: ConsensusState,
-        me: ClientState
+        me: ClientState,
     },
     CheckProposedHeaderAndUpdateState {
         header: WasmHeader,
         consensus_state: ConsensusState,
-        me: ClientState
+        me: ClientState,
     },
     CheckMisbehaviourAndUpdateState {
         me: ClientState,
         misbehaviour: Misbehaviour,
-        consensus_state1: ConsensusState,
-        consensus_state2: ConsensusState,
-    }
+        consensus_state_1: ConsensusState,
+        consensus_state_2: ConsensusState,
+    },
+    VerifyClientState {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        counterparty_client_identifier: String,
+        proof: String, // Go serializes []byte to base64 encoded string
+        counterparty_client_state: CosmosClientState,
+        consensus_state: ConsensusState,
+    },
+    VerifyClientConsensusState {
+        me: ClientState,
+        height: Height,
+        consensus_height: Height,
+        commitment_prefix: MerklePrefix,
+        counterparty_client_identifier: String,
+        proof: String, // Go serializes []byte to base64 encoded string
+        counterparty_consensus_state: CosmosConsensusState,
+        consensus_state: ConsensusState,
+    },
+    VerifyConnectionState {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        connection_id: String,
+        connection_end: ConnectionEnd,
+        consensus_state: ConsensusState,
+    },
+    VerifyChannelState {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        port_id: String,
+        channel_id: String,
+        channel: Channel,
+        consensus_state: ConsensusState,
+    },
+    VerifyPacketCommitment {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        port_id: String,
+        channel_id: String,
+        current_timestamp: u64,
+        delay_period: u64,
+        sequence: u64,
+        commitment_bytes: String, // Go serializes []byte to base64 encoded string
+        consensus_state: ConsensusState,
+    },
+    VerifyPacketAcknowledgement {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        port_id: String,
+        channel_id: String,
+        current_timestamp: u64,
+        delay_period: u64,
+        sequence: u64,
+        acknowledgement: String, // Go serializes []byte to base64 encoded string
+        consensus_state: ConsensusState,
+    },
+    VerifyPacketReceiptAbsence {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        port_id: String,
+        channel_id: String,
+        current_timestamp: u64,
+        delay_period: u64,
+        sequence: u64,
+        consensus_state: ConsensusState,
+    },
+    VerifyNextSequenceRecv {
+        me: ClientState,
+        height: Height,
+        commitment_prefix: MerklePrefix,
+        proof: String, // Go serializes []byte to base64 encoded string
+        port_id: String,
+        channel_id: String,
+        current_timestamp: u64,
+        delay_period: u64,
+        next_sequence_recv: u64,
+        consensus_state: ConsensusState,
+    },
+    //VerifyUpgradeAndUpdateState ?
+}
 
-    //CheckMisbehaviourAndUpdateState: {}, // TODO: via cli 
-    /////home/admin/Projects/gaia-upstream/build/gaiad --home "data/.gaiad" tx ibc wasm-client misbehaviour
-    // VerifyClientState
-    // VerifyClientConsensusState
-    // VerifyUpgradeAndUpdateState .. maybe?
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct ClientStateCallResponse {
+    pub me: ClientState,
+    pub result: ClientStateCallResponseResult,
+    pub new_client_state: ClientState,
+    pub new_consensus_state: ConsensusState,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct ClientStateCallResponseResult {
+    pub is_valid: bool,
+    pub err_msg: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
@@ -54,6 +154,41 @@ pub struct CheckMisbehaviourAndUpdateStateResult {
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyClientConsensusStateResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyClientStateResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyConnectionStateResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyChannelStateResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyPacketCommitmentResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyPacketAcknowledgementResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyPacketReceiptAbsenceResult {
+    pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryMsg {
     LatestHeight {},
@@ -66,4 +201,3 @@ pub struct LatestHeightResponse {
     pub last_epoch: u64,
     pub validator_set: Vec<u8>,
 }
-

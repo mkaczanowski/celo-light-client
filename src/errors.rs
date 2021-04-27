@@ -34,7 +34,7 @@ pub enum Kind {
     BlsInvalidPublicKey,
 
     #[error("encountered a block with time set in the future")]
-    FutureBlock,
+    HeaderVerificationError { msg: &'static str },
 
     #[error("key not found")]
     KeyNotFound,
