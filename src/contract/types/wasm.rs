@@ -1,16 +1,17 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 use crate::contract::types::ibc::{Height, MerkleRoot};
+use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
-// NOTE: Without the other side of the bridge being implemented we don't know
-// the exact fields within the cosmos consenus state.
-// This must be updated in a future
+// Without the other side of the bridge (Tendermint LC on Celo)
+// we don't know how the consensus or client state will look like.
+//
+// NOTE: This is just a placeholder
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct CosmosConsensusState {
     pub root: MerkleRoot,
 }
 
+// NOTE: This is just a placeholder
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 pub struct CosmosClientState {
     pub latest_height: Height,

@@ -231,10 +231,15 @@ mod tests {
         StateConfig {
             epoch_size: 123,
             allowed_clock_skew: 123,
+            trusting_period: 123,
+            upgrade_path: vec!["some".to_string(), "path".to_string()],
 
             verify_epoch_headers: true,
             verify_non_epoch_headers: true, 
             verify_header_timestamp: true,
+
+            allow_update_after_misbehavior: false,
+            allow_update_after_expiry: false,
         }
     }
 

@@ -78,10 +78,15 @@ async fn main(){
     let state_config = StateConfig {
        epoch_size,
        allowed_clock_skew: 5,
+       trusting_period: 100,
+       upgrade_path: vec![],
 
        verify_epoch_headers: validate_all_headers,
        verify_non_epoch_headers: validate_all_headers,
        verify_header_timestamp: true,
+
+       allow_update_after_misbehavior: false,
+       allow_update_after_expiry: false,
     };
     let mut state = State::new(state_config);
 

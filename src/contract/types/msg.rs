@@ -2,7 +2,6 @@ use crate::contract::types::ibc::{Channel, ConnectionEnd, Height, MerklePrefix};
 use crate::contract::types::wasm::{
     ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour, WasmHeader,
 };
-use crate::types::header::Hash;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +21,14 @@ pub enum HandleMsg {
         header: WasmHeader,
         consensus_state: ConsensusState,
         me: ClientState,
+    },
+    VerifyUpgradeAndUpdateState {
+        me: ClientState,
+        new_client_state: ClientState,
+        new_consensus_state: ConsensusState,
+        client_upgrade_proof: String, // Go serializes []byte to base64 encoded string
+        consensus_state_upgrade_proof: String, // Go serializes []byte to base64 encoded string
+        last_height_consensus_state: ConsensusState,
     },
     CheckMisbehaviourAndUpdateState {
         me: ClientState,
@@ -117,7 +124,6 @@ pub enum HandleMsg {
         next_sequence_recv: u64,
         consensus_state: ConsensusState,
     },
-    //VerifyUpgradeAndUpdateState ?
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
@@ -145,6 +151,13 @@ pub struct CheckHeaderAndUpdateStateResult {
     pub new_client_state: ClientState,
     pub new_consensus_state: ConsensusState,
     pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct VerifyUpgradeAndUpdateStateResult {
+    pub result: ClientStateCallResponseResult,
+    pub new_client_state: ClientState,
+    pub new_consensus_state: ConsensusState,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
@@ -191,13 +204,19 @@ pub struct VerifyPacketReceiptAbsenceResult {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryMsg {
-    LatestHeight {},
+    ProcessedTime { height: Height },
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
-pub struct LatestHeightResponse {
-    pub last_header_height: u64,
-    pub last_header_hash: Hash,
-    pub last_epoch: u64,
-    pub validator_set: Vec<u8>,
+pub struct ProcessedTimeResponse {
+    pub time: u64,
+}
+
+impl ClientStateCallResponseResult {
+    pub fn success() -> Self {
+       Self {
+            is_valid: true,
+            err_msg: "".to_owned(),
+       }
+    }
 }

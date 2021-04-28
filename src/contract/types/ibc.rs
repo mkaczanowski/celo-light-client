@@ -1,18 +1,27 @@
 use crate::contract::serialization::to_generic_err;
-use cosmwasm_std::{from_slice, StdError};
+use cosmwasm_std::StdError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-// This file defines core IBC structures.
-// We can't use protobuf compiled structs because:
-//  * Go serializes []byte as base64 string (additional operation is required to decode to Vec<u8>)
-//  * Deriving JsonSchema via prost isn't possible
+// This file defines core IBC structures required by the light client contract.
 //
-// Also, the Light Client package shouldn't mantain copy of IBC protobuf files etc. In the long run
-// there should be upstream library (ie. `ibc-rs`) that would expose those structs.
+// It would be great if we could reuse types from other library (ie. `ibc-rs`), but:
+//  * Go serializes []byte as base64 string (additional step required: base64::decode(data) -> Vec<u8>)
+//  * Deriving JsonSchema via prost isn't possible (JsonSchema's required by cosmwasm)
+//
+// Therefore the selected structures have been copied and modified as needed.
 
-// Origin: ibc.core.connection.v1
+// Some types are not being serialized/deserialized by contract, therefore are used as-is.
+pub type Sequence = ibc::ics04_channel::packet::Sequence;
+pub type ChannelId = ibc::ics24_host::identifier::ChannelId;
+pub type ClientId = ibc::ics24_host::identifier::ClientId;
+pub type ConnectionId = ibc::ics24_host::identifier::ConnectionId;
+pub type PortId = ibc::ics24_host::identifier::PortId;
+pub type Path = ibc::ics24_host::Path;
+pub type ClientUpgradePath = ibc::ics24_host::ClientUpgradePath;
+
+// Origin: ibc.core.connection.v1 (compiled proto)
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectionEnd {
     client_id: String,
@@ -22,7 +31,7 @@ pub struct ConnectionEnd {
     delay_period: u64,
 }
 
-// Origin: ibc.core.connection.v1
+// Origin: ibc.core.connection.v1 (compiled proto)
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Counterparty {
     pub client_id: String,
@@ -30,14 +39,14 @@ pub struct Counterparty {
     pub prefix: MerklePrefix,
 }
 
-// Origin: ibc.core.connection.v1
+// Origin: ibc.core.connection.v1 (compiled proto)
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Version {
     pub identifier: String,
     pub features: Vec<String>,
 }
 
-// Origin: ibc.core.channel.v1
+// Origin: ibc.core.channel.v1 (compiled proto)
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Channel {
     pub state: i32,
@@ -47,30 +56,31 @@ pub struct Channel {
     pub version: String,
 }
 
-// Origin: ibc.core.commitment.v1
+// Origin: ibc.core.commitment.v1 (compiled proto)
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MerklePrefix {
-    pub key_prefix: String // Go serializes []byte to base64 encoded string
+    pub key_prefix: String, // Go serializes []byte to base64 encoded string
 }
 
-// Origin: ibc.core.commitment.v1
+// Origin: ibc.core.commitment.v1 (compiled proto)
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 pub struct MerkleRoot {
     pub hash: String, // Go serializes []byte to base64 encoded string
 }
 
-// Origin: ibc.core.commitment.v1
+// Origin: ibc.core.commitment.v1 (compiled proto)
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 pub struct MerklePath {
     pub key_path: Vec<String>,
 }
 
-// Origin: ibc.core.commitment.v1
+// Origin: ibc.core.commitment.v1 (compiled proto mixed with ics23 crate)
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct MerkleProof {
     pub proofs: Vec<ics23::CommitmentProof>,
 }
 
+// Origin: ibc-rs/modules/src/ics02_client/height.rs (added JsonSchema and serde defaults)
 #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, JsonSchema)]
 pub struct Height {
     #[serde(default)]
@@ -112,10 +122,8 @@ impl std::fmt::Display for Height {
     }
 }
 
-pub fn apply_prefix(
-    prefix: &MerklePrefix,
-    mut path: Vec<String>,
-) -> Result<MerklePath, StdError> {
+// Origin: cosmos-sdk/x/ibc/core/23-commitment/types/merkle.go (ported)
+pub fn apply_prefix(prefix: &MerklePrefix, mut path: Vec<String>) -> Result<MerklePath, StdError> {
     if prefix.key_prefix.len() == 0 {
         return Err(to_generic_err("empty prefix"));
     }
@@ -128,7 +136,7 @@ pub fn apply_prefix(
     Ok(MerklePath { key_path: result })
 }
 
-// Origin: cosmos-sdk/x/ibc/core/23-commitment/types/merkle.go
+// Origin: cosmos-sdk/x/ibc/core/23-commitment/types/merkle.go (ported)
 pub fn verify_membership(
     proof: &MerkleProof,
     specs: &[ics23::ProofSpec],

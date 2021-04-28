@@ -50,32 +50,59 @@ impl FromRlp for Vec<Validator> {
 pub struct StateConfig {
     pub epoch_size: u64,
     pub allowed_clock_skew: u64,
+    pub trusting_period: u64,
+    pub upgrade_path: Vec<String>,
 
     pub verify_epoch_headers: bool,
     pub verify_non_epoch_headers: bool,
     pub verify_header_timestamp: bool,
+
+    pub allow_update_after_misbehavior: bool,
+    pub allow_update_after_expiry: bool,
 }
 
 impl Encodable for StateConfig {
     fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(5);
+        s.begin_list(9);
 
         s.append(&self.epoch_size);
         s.append(&self.allowed_clock_skew);
+        s.append(&self.trusting_period);
+
+        s.begin_list(self.upgrade_path.len());
+        for path in self.upgrade_path.iter() {
+            s.append(path);
+        }
+
         s.append(&self.verify_epoch_headers);
         s.append(&self.verify_non_epoch_headers);
         s.append(&self.verify_header_timestamp);
+
+        s.append(&self.allow_update_after_misbehavior);
+        s.append(&self.allow_update_after_expiry);
     }
 }
 
 impl Decodable for StateConfig {
         fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+            let upgrade_path: Result<Vec<String>, DecoderError> = rlp
+                .at(3)?
+                .iter()
+                .map(|r| {
+                    r.as_val()
+                })
+                .collect();
+
             Ok(StateConfig{
                 epoch_size: rlp.val_at(0)?,
                 allowed_clock_skew: rlp.val_at(1)?,
-                verify_epoch_headers: rlp.val_at(2)?,
-                verify_non_epoch_headers: rlp.val_at(3)?,
-                verify_header_timestamp: rlp.val_at(4)?,
+                trusting_period: rlp.val_at(2)?,
+                upgrade_path: upgrade_path?,
+                verify_epoch_headers: rlp.val_at(4)?,
+                verify_non_epoch_headers: rlp.val_at(5)?,
+                verify_header_timestamp: rlp.val_at(6)?,
+                allow_update_after_misbehavior: rlp.val_at(7)?,
+                allow_update_after_expiry: rlp.val_at(8)?,
             })
         }
 }

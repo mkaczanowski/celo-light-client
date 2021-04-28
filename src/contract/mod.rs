@@ -3,30 +3,21 @@ pub mod store;
 pub mod types;
 pub mod util;
 
-use std::str::FromStr;
-
-use cosmwasm_std::{attr, to_vec, Binary};
-use cosmwasm_std::{Deps, DepsMut, Env, MessageInfo};
-use cosmwasm_std::{HandleResponse, InitResponse, StdError, StdResult};
-
-use ibc::ics04_channel::packet::Sequence;
-use ibc::ics24_host::{
-    identifier::{ChannelId, ClientId, ConnectionId, PortId},
-    Path as IcsPath,
-};
-
 use crate::contract::{
-    serialization::{from_base64, from_base64_rlp, from_base64_json_slice, to_generic_err},
+    serialization::{from_base64, from_base64_json_slice, from_base64_rlp, to_generic_err},
     store::{get_processed_time, set_processed_time},
     types::ibc::{
-        apply_prefix, verify_membership, Channel, ConnectionEnd, Height, MerkleProof, MerklePrefix, MerkleRoot,
+        apply_prefix, verify_membership, Channel, ChannelId, ClientId, ClientUpgradePath,
+        ConnectionEnd, ConnectionId, Height, MerklePath, MerklePrefix, MerkleProof, MerkleRoot,
+        Path as IcsPath, PortId, Sequence,
     },
     types::msg::{
         CheckHeaderAndUpdateStateResult, CheckMisbehaviourAndUpdateStateResult,
-        ClientStateCallResponseResult, HandleMsg, InitializeStateResult, LatestHeightResponse,
+        ClientStateCallResponseResult, HandleMsg, InitializeStateResult, ProcessedTimeResponse,
         QueryMsg, VerifyChannelStateResult, VerifyClientConsensusStateResult,
         VerifyClientStateResult, VerifyConnectionStateResult, VerifyPacketAcknowledgementResult,
         VerifyPacketCommitmentResult, VerifyPacketReceiptAbsenceResult,
+        VerifyUpgradeAndUpdateStateResult,
     },
     types::wasm::{
         ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour,
@@ -34,15 +25,20 @@ use crate::contract::{
     },
     util::{u64_to_big_endian, wrap_response},
 };
-use crate::state::State;
-use crate::traits::ToRlp;
-use crate::types::{
-    header::Header,
-    state::{StateConfig as LightClientState, StateEntry as LightConsensusState},
+use crate::{
+    state::State,
+    traits::ToRlp,
+    types::{
+        header::Header,
+        state::{StateConfig as LightClientState, StateEntry as LightConsensusState},
+    },
 };
 
-// TODO: move this to client_state flags
-const ALLOW_UPDATE_AFTER_MISBEHAVIOUR: bool = true;
+use cosmwasm_std::{attr, to_vec, Binary};
+use cosmwasm_std::{Deps, DepsMut, Env, MessageInfo};
+use cosmwasm_std::{HandleResponse, InitResponse, StdError, StdResult};
+
+use std::str::FromStr;
 
 pub(crate) fn init(
     _deps: DepsMut,
@@ -73,7 +69,7 @@ pub(crate) fn handle(
             header,
             consensus_state,
             me,
-        } => check_header(deps, env, me, consensus_state, header),
+        } => check_header_and_update_state(deps, env, me, consensus_state, header),
 
         HandleMsg::CheckMisbehaviourAndUpdateState {
             me,
@@ -94,6 +90,24 @@ pub(crate) fn handle(
             consensus_state,
             me,
         } => check_proposed_header(deps, env, me, consensus_state, header),
+
+        HandleMsg::VerifyUpgradeAndUpdateState {
+            me,
+            new_client_state,
+            new_consensus_state,
+            client_upgrade_proof,
+            consensus_state_upgrade_proof,
+            last_height_consensus_state,
+        } => verify_upgrade_and_update_state(
+            deps,
+            env,
+            me,
+            new_client_state,
+            new_consensus_state,
+            client_upgrade_proof,
+            consensus_state_upgrade_proof,
+            last_height_consensus_state,
+        ),
 
         HandleMsg::VerifyClientState {
             me,
@@ -291,11 +305,11 @@ pub(crate) fn handle(
 
 pub(crate) fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::LatestHeight {} => {
-            // TODO: How is this endpoint called?
-            let out = Binary(vec![1, 2, 3]);
-
-            Ok(out)
+        QueryMsg::ProcessedTime { height } => {
+            let processed_time = get_processed_time(deps.storage, height)?;
+            Ok(cosmwasm_std::to_binary(&ProcessedTimeResponse {
+                time: processed_time,
+            })?)
         }
     }
 }
@@ -309,14 +323,15 @@ fn init_contract(
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal initial state entry (ie. validator set, epoch_size etc.)
     let light_consensus_state: LightConsensusState =
-        from_base64_rlp(&consensus_state.data, "msg.initial_state_entry".to_string())?;
+        from_base64_rlp(&consensus_state.data, "msg.initial_state_entry")?;
 
     // Verify initial state
     match light_consensus_state.verify() {
         Err(e) => {
-            return Err(StdError::GenericErr {
-                msg: format!("Initial state verification failed. Error: {}", e),
-            })
+            return Err(StdError::generic_err(format!(
+                "Initial state verification failed. Error: {}",
+                e
+            )))
         }
         _ => {}
     }
@@ -327,10 +342,7 @@ fn init_contract(
     // Update the state
     let response_data = Binary(to_vec(&InitializeStateResult {
         me,
-        result: ClientStateCallResponseResult {
-            is_valid: true,
-            err_msg: String::from(""),
-        },
+        result: ClientStateCallResponseResult::success(),
     })?);
 
     Ok(HandleResponse {
@@ -343,7 +355,7 @@ fn init_contract(
     })
 }
 
-fn check_header(
+fn check_header_and_update_state(
     deps: DepsMut,
     env: Env,
     me: ClientState,
@@ -353,25 +365,23 @@ fn check_header(
     let current_timestamp: u64 = env.block.time;
 
     // Unmarshal header
-    let header: Header = from_base64_rlp(&wasm_header.data, "msg.header".to_string())?;
+    let header: Header = from_base64_rlp(&wasm_header.data, "msg.header")?;
 
     // Unmarshal state entry
-    let light_consensus_state: LightConsensusState = from_base64_rlp(
-        &consensus_state.data,
-        "msg.light_consensus_state".to_string(),
-    )?;
+    let light_consensus_state: LightConsensusState =
+        from_base64_rlp(&consensus_state.data, "msg.light_consensus_state")?;
 
     // Unmarshal state config
-    let light_client_state: LightClientState =
-        from_base64_rlp(&me.data, "msg.light_client_state".to_string())?;
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
 
     // Ingest new header
     let mut state: State = State::from_entry(light_consensus_state, light_client_state);
     match state.insert_header(&header, current_timestamp) {
         Err(e) => {
-            return Err(StdError::GenericErr {
-                msg: format!("Unable to ingest header. Error: {}", e),
-            })
+            return Err(StdError::generic_err(format!(
+                "Unable to ingest header. Error: {}",
+                e
+            )))
         }
         _ => {}
     }
@@ -394,10 +404,7 @@ fn check_header(
     let response_data = Binary(to_vec(&CheckHeaderAndUpdateStateResult {
         new_client_state,
         new_consensus_state,
-        result: ClientStateCallResponseResult {
-            is_valid: true,
-            err_msg: "".to_string(),
-        },
+        result: ClientStateCallResponseResult::success(),
     })?);
 
     Ok(HandleResponse {
@@ -417,20 +424,124 @@ fn check_proposed_header(
     consensus_state: ConsensusState,
     header: WasmHeader,
 ) -> Result<HandleResponse, StdError> {
+    let current_timestamp: u64 = env.block.time;
     let mut new_client_state = me.clone();
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
 
     if me.frozen {
-        if !ALLOW_UPDATE_AFTER_MISBEHAVIOUR {
-            return Err(StdError::GenericErr {
-                msg: "Client is not allowed to be unfrozen".to_string(),
-            });
+        if !light_client_state.allow_update_after_misbehavior {
+            return Err(StdError::generic_err(
+                "Client is not allowed to be unfrozen",
+            ));
         }
 
         new_client_state.frozen = false;
         new_client_state.frozen_height = None;
+
+        // No softer validation for expired clients
+        return check_header_and_update_state(deps, env, new_client_state, consensus_state, header);
+    } else if light_client_state.allow_update_after_expiry
+        && consensus_state.timestamp + light_client_state.trusting_period > current_timestamp
+    {
+        // If client is expired, lets perform full validation
+        return check_header_and_update_state(deps, env, new_client_state, consensus_state, header);
     }
 
-    return check_header(deps, env, new_client_state, consensus_state, header);
+    Err(StdError::generic_err(
+        "client cannot be updated with the proposal",
+    ))
+}
+
+pub fn verify_upgrade_and_update_state(
+    _deps: DepsMut,
+    env: Env,
+    me: ClientState,
+    new_client_state: ClientState,
+    new_consensus_state: ConsensusState,
+    client_upgrade_proof: String,
+    consensus_state_upgrade_proof: String,
+    last_height_consensus_state: ConsensusState,
+) -> Result<HandleResponse, StdError> {
+    let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
+
+    // Sanity check
+    if !(new_client_state.latest_height > me.latest_height) {
+        return Err(StdError::generic_err(format!(
+            "upgraded client height {:?} must be at greater than current client height {:?}",
+            new_client_state.latest_height, me.latest_height
+        )));
+    }
+
+    // Unmarshal proofs
+    let proof_client: MerkleProof =
+        from_base64_json_slice(&client_upgrade_proof, "msg.client_proof")?;
+    let proof_consensus: MerkleProof =
+        from_base64_json_slice(&consensus_state_upgrade_proof, "msg.consensus_proof")?;
+
+    // Unmarshal root
+    let root: Vec<u8> = from_base64(
+        &last_height_consensus_state.root.hash,
+        "msg.last_height_consensus_state.root",
+    )?;
+
+    // Check consensus state expiration
+    let current_timestamp: u64 = env.block.time;
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
+    if last_height_consensus_state.timestamp + light_client_state.trusting_period
+        > current_timestamp
+    {
+        return Err(StdError::generic_err("cannot upgrade an expired client"));
+    }
+
+    // Verify client proof
+    let value: Vec<u8> = to_vec(&new_client_state)?;
+    let upgrade_client_path = construct_upgrade_merkle_path(
+        &light_client_state.upgrade_path,
+        ClientUpgradePath::UpgradedClientState(me.latest_height.unwrap().revision_number),
+    );
+    if !verify_membership(
+        &proof_consensus,
+        &specs,
+        &root,
+        &upgrade_client_path,
+        value,
+        0,
+    )? {
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
+    }
+
+    // Verify consensus proof
+    let value: Vec<u8> = to_vec(&new_consensus_state)?;
+    let upgrade_consensus_state_path = construct_upgrade_merkle_path(
+        &light_client_state.upgrade_path,
+        ClientUpgradePath::UpgradedClientConsensusState(me.latest_height.unwrap().revision_number),
+    );
+    if !verify_membership(
+        &proof_client,
+        &specs,
+        &root,
+        &upgrade_consensus_state_path,
+        value,
+        0,
+    )? {
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
+    }
+
+    // Build up the response
+    wrap_response(
+        &VerifyUpgradeAndUpdateStateResult {
+            result: ClientStateCallResponseResult::success(),
+            // NOTE: The contents of client or consensus state
+            // are subject to change (once we have end-to-end test flow)
+            new_client_state,
+            new_consensus_state,
+        },
+        "verify_client_state",
+    )
 }
 
 pub fn check_misbehaviour(
@@ -443,12 +554,10 @@ pub fn check_misbehaviour(
 ) -> Result<HandleResponse, StdError> {
     // The header heights are expected to be the same
     if misbehaviour.header_1.height != misbehaviour.header_2.height {
-        return Err(StdError::GenericErr {
-            msg: format!(
-                "Misbehaviour header heights differ, {} != {}",
-                misbehaviour.header_1.height, misbehaviour.header_2.height
-            ),
-        });
+        return Err(StdError::generic_err(format!(
+            "Misbehaviour header heights differ, {} != {}",
+            misbehaviour.header_1.height, misbehaviour.header_2.height
+        )));
     }
 
     // If client is already frozen at earlier height than misbehaviour, return with error
@@ -456,24 +565,22 @@ pub fn check_misbehaviour(
         && me.frozen_height.is_some()
         && me.frozen_height.unwrap() <= misbehaviour.header_1.height
     {
-        return Err(StdError::GenericErr {
-            msg: format!(
-                "Client is already frozen at earlier height {} than misbehaviour height {}",
-                me.frozen_height.unwrap(),
-                misbehaviour.header_1.height
-            ),
-        });
+        return Err(StdError::generic_err(format!(
+            "Client is already frozen at earlier height {} than misbehaviour height {}",
+            me.frozen_height.unwrap(),
+            misbehaviour.header_1.height
+        )));
     }
 
     // Unmarshal header
-    let header_1: Header = from_base64_rlp(&misbehaviour.header_1.data, "msg.header".to_string())?;
-    let header_2: Header = from_base64_rlp(&misbehaviour.header_2.data, "msg.header".to_string())?;
+    let header_1: Header = from_base64_rlp(&misbehaviour.header_1.data, "msg.header")?;
+    let header_2: Header = from_base64_rlp(&misbehaviour.header_2.data, "msg.header")?;
 
     // The header state root should differ
     if header_1.root == header_2.root {
-        return Err(StdError::GenericErr {
-            msg: "Header's state roots should differ, but are the same".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "Header's state roots should differ, but are the same",
+        ));
     }
 
     // Check the validity of the two conflicting headers against their respective
@@ -488,10 +595,7 @@ pub fn check_misbehaviour(
 
     let response_data = Binary(to_vec(&CheckMisbehaviourAndUpdateStateResult {
         new_client_state,
-        result: ClientStateCallResponseResult {
-            is_valid: true,
-            err_msg: "".to_string(),
-        },
+        result: ClientStateCallResponseResult::success(),
     })?);
 
     Ok(HandleResponse {
@@ -511,25 +615,20 @@ pub fn check_misbehaviour_header(
     header: &Header,
 ) -> Result<(), StdError> {
     // Unmarshal state entry
-    let light_consensus_state: LightConsensusState = from_base64_rlp(
-        &consensus_state.data,
-        "msg.light_consensus_state".to_string(),
-    )?;
+    let light_consensus_state: LightConsensusState =
+        from_base64_rlp(&consensus_state.data, "msg.light_consensus_state")?;
 
     // Unmarshal state config
-    let light_client_state: LightClientState =
-        from_base64_rlp(&me.data, "msg.light_client_state".to_string())?;
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
 
     // Verify header
     let state: State = State::from_entry(light_consensus_state, light_client_state);
     match state.verify_header_seal(&header) {
         Err(e) => {
-            return Err(StdError::GenericErr {
-                msg: format!(
-                    "Failed to verify header num: {} against it's consensus state. Error: {}",
-                    num, e
-                ),
-            })
+            return Err(StdError::generic_err(format!(
+                "Failed to verify header num: {} against it's consensus state. Error: {}",
+                num, e
+            )))
         }
         _ => return Ok(()),
     }
@@ -567,13 +666,13 @@ pub fn verify_client_state(
     proving_consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
     let root: Vec<u8> = from_base64(
         &proving_consensus_state.root.hash,
-        "msg.proving_consensus_state.root"
+        "msg.proving_consensus_state.root",
     )?;
 
     // Build path (proof is used to validate the existance of value under that path)
@@ -587,18 +686,15 @@ pub fn verify_client_state(
     let value: Vec<u8> = to_vec(&counterparty_client_state)?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyClientStateResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_client_state",
     )
@@ -617,13 +713,13 @@ pub fn verify_client_consensus_state(
     proving_consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
     let root: Vec<u8> = from_base64(
         &proving_consensus_state.root.hash,
-        "msg.proving_consensus_state.root"
+        "msg.proving_consensus_state.root",
     )?;
 
     // Build path (proof is used to validate the existance of value under that path)
@@ -639,20 +735,17 @@ pub fn verify_client_consensus_state(
     let value: Vec<u8> = to_vec(&counterparty_consensus_state)?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyClientConsensusStateResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
-        "verify_client_consensus_state",
+        "verify_client_state",
     )
 }
 
@@ -668,13 +761,13 @@ pub fn verify_connection_state(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
     let root: Vec<u8> = from_base64(
         &consensus_state.root.hash,
-        "msg.proving_consensus_state.root"
+        "msg.proving_consensus_state.root",
     )?;
 
     // Build path (proof is used to validate the existance of value under that path)
@@ -687,18 +780,15 @@ pub fn verify_connection_state(
     let value: Vec<u8> = to_vec(&connection_end)?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyConnectionStateResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_connection_state",
     )
@@ -717,13 +807,13 @@ pub fn verify_channel_state(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
     let root: Vec<u8> = from_base64(
         &consensus_state.root.hash,
-        "msg.proving_consensus_state.root"
+        "msg.proving_consensus_state.root",
     )?;
 
     // Build path (proof is used to validate the existance of value under that path)
@@ -738,18 +828,15 @@ pub fn verify_channel_state(
     let value: Vec<u8> = to_vec(&channel)?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyChannelStateResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_channel_state",
     )
@@ -771,14 +858,11 @@ pub fn verify_packet_commitment(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
-    let root: Vec<u8> = from_base64(
-        &consensus_state.root.hash,
-        "msg.consensus_state.root"
-    )?;
+    let root: Vec<u8> = from_base64(&consensus_state.root.hash, "msg.consensus_state.root")?;
 
     // Check delay period has passed
     verify_delay_period_passed(deps, height, current_timestamp, delay_period)?;
@@ -797,18 +881,15 @@ pub fn verify_packet_commitment(
     let value: Vec<u8> = from_base64(&commitment_bytes, "msg.commitment_bytes")?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyPacketCommitmentResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_packet_commitment",
     )
@@ -830,14 +911,11 @@ pub fn verify_packet_acknowledgment(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
-    let root: Vec<u8> = from_base64(
-        &consensus_state.root.hash,
-        "msg.consensus_state.root",
-    )?;
+    let root: Vec<u8> = from_base64(&consensus_state.root.hash, "msg.consensus_state.root")?;
 
     // Check delay period has passed
     verify_delay_period_passed(deps, height, current_timestamp, delay_period)?;
@@ -856,18 +934,15 @@ pub fn verify_packet_acknowledgment(
     let value: Vec<u8> = from_base64(&acknowledgement, "msg.acknowledgement")?;
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyPacketAcknowledgementResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_packet_acknowledgment",
     )
@@ -888,14 +963,11 @@ pub fn verify_packet_receipt_absence(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
-    let root: Vec<u8> = from_base64(
-        &consensus_state.root.hash,
-        "msg.consensus_state.root"
-    )?;
+    let root: Vec<u8> = from_base64(&consensus_state.root.hash, "msg.consensus_state.root")?;
 
     // Check delay period has passed
     verify_delay_period_passed(deps, height, current_timestamp, delay_period)?;
@@ -918,18 +990,15 @@ pub fn verify_packet_receipt_absence(
     // Reference: cosmos-sdk/x/ibc/core/23-commitment/types/merkle.go
     // TODO: ics23-rs library doesn't seem to offer subroot calculation for non_exist
     if !ics23::verify_non_membership(&proof.proofs[0], &specs[0], &root, key) {
-        return Err(StdError::GenericErr {
-            msg: "proof non membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof non membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyPacketReceiptAbsenceResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_packet_receipt_absence",
     )
@@ -950,14 +1019,11 @@ pub fn verify_next_sequence_recv(
     consensus_state: ConsensusState,
 ) -> Result<HandleResponse, StdError> {
     // Unmarshal proof
-    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof".to_string()).unwrap();
+    let proof: MerkleProof = from_base64_json_slice(&proof, "msg.proof")?;
     let specs = vec![ics23::iavl_spec(), ics23::tendermint_spec()];
 
     // Get root from proving (celo) consensus state
-    let root: Vec<u8> = from_base64(
-        &consensus_state.root.hash,
-        "msg.consensus_state.root"
-    )?;
+    let root: Vec<u8> = from_base64(&consensus_state.root.hash, "msg.consensus_state.root")?;
 
     // Check delay period has passed
     verify_delay_period_passed(deps, height, current_timestamp, delay_period)?;
@@ -974,18 +1040,15 @@ pub fn verify_next_sequence_recv(
     let value: Vec<u8> = u64_to_big_endian(next_sequence_recv);
 
     if !verify_membership(&proof, &specs, &root, &path, value, 0)? {
-        return Err(StdError::GenericErr {
-            msg: "proof membership verification failed (invalid proof)".to_string(),
-        });
+        return Err(StdError::generic_err(
+            "proof membership verification failed (invalid proof)",
+        ));
     }
 
     // Build up the response
     wrap_response(
         &VerifyPacketAcknowledgementResult {
-            result: ClientStateCallResponseResult {
-                is_valid: true,
-                err_msg: "".to_string(),
-            },
+            result: ClientStateCallResponseResult::success(),
         },
         "verify_next_sequence_recv",
     )
@@ -1003,15 +1066,25 @@ fn verify_delay_period_passed(
     let valid_time = processed_time + delay_period;
 
     if valid_time > current_timestamp {
-        return Err(StdError::GenericErr {
-            msg: format!(
-                "cannot verify packet until time: {}, current time: {}",
-                valid_time, current_timestamp
-            ),
-        });
+        return Err(StdError::generic_err(format!(
+            "cannot verify packet until time: {}, current time: {}",
+            valid_time, current_timestamp
+        )));
     }
 
     Ok(())
+}
+
+fn construct_upgrade_merkle_path(
+    upgrade_path: &Vec<String>,
+    client_upgrade_path: ibc::ics24_host::ClientUpgradePath,
+) -> MerklePath {
+    let appended_key = ibc::ics24_host::Path::Upgrade(client_upgrade_path).to_string();
+
+    let mut result: Vec<String> = upgrade_path.clone();
+    result.push(appended_key);
+
+    MerklePath { key_path: result }
 }
 
 #[cfg(test)]
