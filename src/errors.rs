@@ -22,7 +22,7 @@ pub enum Kind {
     InvalidChainInsertion,
 
     #[error("aggregated seal does not aggregate enough seals, num_seals: {current}, minimum quorum size: {expected}")]
-    MissingSeals{ current: usize, expected: usize },
+    MissingSeals { current: usize, expected: usize },
 
     #[error("BLS verify error")]
     BlsVerifyError,

@@ -1,14 +1,14 @@
+use crate::bls::verify_aggregated_seal;
+use crate::errors::{Error, Kind};
+use crate::serialization::rlp::{rlp_field_from_bytes, rlp_list_field_from_bytes};
+use crate::traits::{FromRlp, ToRlp};
 use crate::types::header::{Address, Hash};
 use crate::types::istanbul::{IstanbulAggregatedSeal, SerializedPublicKey};
-use crate::traits::{ToRlp, FromRlp};
-use crate::serialization::rlp::{rlp_field_from_bytes, rlp_list_field_from_bytes};
-use crate::errors::{Error, Kind};
-use crate::bls::verify_aggregated_seal;
 
-use rlp::{Rlp, Encodable, Decodable, RlpStream, DecoderError};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub struct Validator{
+pub struct Validator {
     #[serde(with = "crate::serialization::bytes::hexstring")]
     pub address: Address,
 
@@ -26,12 +26,12 @@ impl Encodable for Validator {
 }
 
 impl Decodable for Validator {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-            Ok(Validator{
-                address: rlp_field_from_bytes(&rlp.at(0)?)?,
-                public_key: rlp_field_from_bytes(&rlp.at(1)?)?
-            })
-        }
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        Ok(Validator {
+            address: rlp_field_from_bytes(&rlp.at(0)?)?,
+            public_key: rlp_field_from_bytes(&rlp.at(1)?)?,
+        })
+    }
 }
 
 impl ToRlp for Vec<Validator> {
@@ -84,27 +84,22 @@ impl Encodable for StateConfig {
 }
 
 impl Decodable for StateConfig {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-            let upgrade_path: Result<Vec<String>, DecoderError> = rlp
-                .at(3)?
-                .iter()
-                .map(|r| {
-                    r.as_val()
-                })
-                .collect();
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let upgrade_path: Result<Vec<String>, DecoderError> =
+            rlp.at(3)?.iter().map(|r| r.as_val()).collect();
 
-            Ok(StateConfig{
-                epoch_size: rlp.val_at(0)?,
-                allowed_clock_skew: rlp.val_at(1)?,
-                trusting_period: rlp.val_at(2)?,
-                upgrade_path: upgrade_path?,
-                verify_epoch_headers: rlp.val_at(4)?,
-                verify_non_epoch_headers: rlp.val_at(5)?,
-                verify_header_timestamp: rlp.val_at(6)?,
-                allow_update_after_misbehavior: rlp.val_at(7)?,
-                allow_update_after_expiry: rlp.val_at(8)?,
-            })
-        }
+        Ok(StateConfig {
+            epoch_size: rlp.val_at(0)?,
+            allowed_clock_skew: rlp.val_at(1)?,
+            trusting_period: rlp.val_at(2)?,
+            upgrade_path: upgrade_path?,
+            verify_epoch_headers: rlp.val_at(4)?,
+            verify_non_epoch_headers: rlp.val_at(5)?,
+            verify_header_timestamp: rlp.val_at(6)?,
+            allow_update_after_misbehavior: rlp.val_at(7)?,
+            allow_update_after_expiry: rlp.val_at(8)?,
+        })
+    }
 }
 
 impl ToRlp for StateConfig {
@@ -124,8 +119,8 @@ impl FromRlp for StateConfig {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct StateEntry {
-    pub number: u64, // block number where the snapshot was created
-    pub timestamp: u64, // blocks creation time
+    pub number: u64,                // block number where the snapshot was created
+    pub timestamp: u64,             // blocks creation time
     pub validators: Vec<Validator>, // set of authorized validators at where the snapshot was created
 
     // Hash and aggregated seal are required to validate the header against the validator set.
@@ -151,23 +146,18 @@ impl Encodable for StateEntry {
 }
 
 impl Decodable for StateEntry {
-        fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-            let validators: Result<Vec<Validator>, DecoderError> = rlp
-                .at(2)?
-                .iter()
-                .map(|r| {
-                    r.as_val()
-                })
-                .collect();
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let validators: Result<Vec<Validator>, DecoderError> =
+            rlp.at(2)?.iter().map(|r| r.as_val()).collect();
 
-            Ok(StateEntry{
-                validators: validators?,
-                number: rlp.val_at(0)?,
-                timestamp: rlp.val_at(1)?,
-                hash: rlp_list_field_from_bytes(rlp, 3)?,
-                aggregated_seal: rlp.val_at(4)?,
-            })
-        }
+        Ok(StateEntry {
+            validators: validators?,
+            number: rlp.val_at(0)?,
+            timestamp: rlp.val_at(1)?,
+            hash: rlp_list_field_from_bytes(rlp, 3)?,
+            aggregated_seal: rlp.val_at(4)?,
+        })
+    }
 }
 
 impl StateEntry {
@@ -182,11 +172,7 @@ impl StateEntry {
     }
 
     pub fn verify(&self) -> Result<(), Error> {
-        verify_aggregated_seal(
-            self.hash,
-            &self.validators,
-            self.aggregated_seal.clone(),
-        )
+        verify_aggregated_seal(self.hash, &self.validators, self.aggregated_seal.clone())
     }
 }
 

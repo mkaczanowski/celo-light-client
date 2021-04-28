@@ -1,4 +1,4 @@
-use crate::contract::serialization::to_generic_err;
+use crate::contract::util::to_generic_err;
 use cosmwasm_std::StdError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -4,7 +4,7 @@ pub mod types;
 pub mod util;
 
 use crate::contract::{
-    serialization::{from_base64, from_base64_json_slice, from_base64_rlp, to_generic_err},
+    serialization::{from_base64, from_base64_json_slice, from_base64_rlp},
     store::{get_processed_time, set_processed_time},
     types::ibc::{
         apply_prefix, verify_membership, Channel, ChannelId, ClientId, ClientUpgradePath,
@@ -23,7 +23,7 @@ use crate::contract::{
         ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour,
         WasmHeader,
     },
-    util::{u64_to_big_endian, wrap_response},
+    util::{u64_to_big_endian, wrap_response, to_generic_err},
 };
 use crate::{
     state::State,

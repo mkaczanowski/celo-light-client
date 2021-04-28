@@ -10,10 +10,10 @@ pub fn from_base64<S: Into<String>>(
     match base64::decode(base64_data) {
         Ok(bytes) => Ok(bytes),
         Err(e) => {
-            return Err(StdError::ParseErr {
-                target_type: target_type.into(),
-                msg: format!("Unable to base64 decode data. Error: {}", e),
-            })
+            return Err(StdError::parse_err(
+                target_type,
+                format!("Unable to base64 decode data. Error: {}", e)
+            ))
         }
     }
 }
@@ -48,14 +48,4 @@ where
     })?;
 
     Ok(t)
-}
-
-// Util function to convert error to string
-pub fn to_generic_err<T>(err: T) -> StdError
-where
-    T: Display,
-{
-    StdError::GenericErr {
-        msg: err.to_string(),
-    }
 }

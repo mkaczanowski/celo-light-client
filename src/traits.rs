@@ -15,7 +15,9 @@ pub trait ToRlp {
 }
 
 pub trait FromRlp {
-    fn from_rlp(bytes: &[u8]) -> Result<Self, Error> where Self: std::marker::Sized;
+    fn from_rlp(bytes: &[u8]) -> Result<Self, Error>
+    where
+        Self: std::marker::Sized;
 }
 
 pub trait Storage {
