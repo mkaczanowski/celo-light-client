@@ -65,10 +65,7 @@ impl ToRlp for Config {
 
 impl FromRlp for Config {
     fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
-        match rlp::decode(&bytes) {
-            Ok(config) => Ok(config),
-            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
-        }
+        rlp::decode(&bytes).map_err(|e| Kind::RlpDecodeError.context(e).into())
     }
 }
 
@@ -146,7 +143,7 @@ impl Snapshot {
     }
 
     pub fn verify(&self) -> Result<(), Error> {
-        verify_aggregated_seal(self.hash, &self.validators, self.aggregated_seal.clone())
+        verify_aggregated_seal(self.hash, &self.validators, &self.aggregated_seal)
     }
 }
 
@@ -158,9 +155,6 @@ impl ToRlp for Snapshot {
 
 impl FromRlp for Snapshot {
     fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
-        match rlp::decode(&bytes) {
-            Ok(header) => Ok(header),
-            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
-        }
+        rlp::decode(&bytes).map_err(|e| Kind::RlpDecodeError.context(e).into())
     }
 }

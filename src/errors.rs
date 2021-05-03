@@ -8,7 +8,6 @@ pub type Error = anomaly::Error<Kind>;
 /// All error kinds related to the light client.
 #[derive(Clone, Debug, Error)]
 pub enum Kind {
-    /// Invalid data length while converting slice to fixed-size array type
     #[error("invalid data length while converting slice to fixed-size array type ({current} != {expected}")]
     InvalidDataLength { current: usize, expected: usize },
 

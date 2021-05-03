@@ -114,10 +114,8 @@ impl IstanbulExtra {
                 .into());
         }
 
-        match rlp::decode(&bytes[ISTANBUL_EXTRA_VANITY_LENGTH..]) {
-            Ok(extra) => Ok(extra),
-            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
-        }
+        rlp::decode(&bytes[ISTANBUL_EXTRA_VANITY_LENGTH..])
+            .map_err(|e| Kind::RlpDecodeError.context(e).into())
     }
 
     pub fn to_rlp(&self, vanity: &IstanbulExtraVanity) -> Vec<u8> {

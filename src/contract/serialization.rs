@@ -1,7 +1,6 @@
 use crate::traits::FromRlp;
 use cosmwasm_std::{from_slice, StdError};
 use serde::de::DeserializeOwned;
-use std::fmt::Display;
 
 pub fn from_base64<S: Into<String>>(
     base64_data: &String,

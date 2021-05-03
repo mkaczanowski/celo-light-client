@@ -36,8 +36,6 @@ pub use istanbul::{
 pub use state::State;
 pub use errors::{Error, Kind};
 pub use traits::{
-    Storage,
-    SerializableStorage,
     FromBytes,
     DefaultFrom,
     ToRlp,
@@ -49,6 +47,5 @@ pub use contract::*;
 /// WASM methods exposed to be used by CosmWasm handler
 /// All methods are thin wrapper around actual contract contained in
 /// contract module.
-
 #[cfg(target_arch = "wasm32")]
 cosmwasm_std::create_entry_points!(contract);

@@ -1,16 +1,16 @@
 use crate::bls::verify_aggregated_seal;
 use crate::errors::{Error, Kind};
 use crate::istanbul::is_last_block_of_epoch;
+use crate::traits::StateConfig;
 use crate::types::header::{Address, Header};
 use crate::types::istanbul::IstanbulExtra;
 use crate::types::state::{Snapshot, Validator};
 use num::cast::ToPrimitive;
 use num_bigint::BigInt as Integer;
 use num_traits::Zero;
-use crate::traits::StateConfig;
 use std::collections::HashMap;
 
-pub struct State<'a>{
+pub struct State<'a> {
     snapshot: Snapshot,
     config: &'a dyn StateConfig,
 }
@@ -100,7 +100,11 @@ impl<'a> State<'a> {
         let header_hash = header.hash()?;
         let extra = IstanbulExtra::from_rlp(&header.extra)?;
 
-        verify_aggregated_seal(header_hash, &self.snapshot.validators, extra.aggregated_seal)
+        verify_aggregated_seal(
+            header_hash,
+            &self.snapshot.validators,
+            &extra.aggregated_seal,
+        )
     }
 
     pub fn insert_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {

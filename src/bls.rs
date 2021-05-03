@@ -11,7 +11,7 @@ use num_bigint::BigInt as Integer;
 pub fn verify_aggregated_seal(
     header_hash: Hash,
     validators: &[Validator],
-    aggregated_seal: IstanbulAggregatedSeal,
+    aggregated_seal: &IstanbulAggregatedSeal,
 ) -> Result<(), Error> {
     let proposal_seal = prepare_commited_seal(header_hash, &aggregated_seal.round);
     let expected_quorum_size = min_quorum_size(validators.len());

@@ -22,7 +22,7 @@ pub type Path = ibc::ics24_host::Path;
 pub type ClientUpgradePath = ibc::ics24_host::ClientUpgradePath;
 
 // Origin: ibc.core.connection.v1 (compiled proto)
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct ConnectionEnd {
     client_id: String,
     versions: Vec<Version>,
@@ -32,7 +32,7 @@ pub struct ConnectionEnd {
 }
 
 // Origin: ibc.core.connection.v1 (compiled proto)
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct Counterparty {
     pub client_id: String,
     pub connection_id: String,
@@ -40,14 +40,14 @@ pub struct Counterparty {
 }
 
 // Origin: ibc.core.connection.v1 (compiled proto)
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct Version {
     pub identifier: String,
     pub features: Vec<String>,
 }
 
 // Origin: ibc.core.channel.v1 (compiled proto)
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct Channel {
     pub state: i32,
     pub ordering: i32,
@@ -57,19 +57,19 @@ pub struct Channel {
 }
 
 // Origin: ibc.core.commitment.v1 (compiled proto)
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct MerklePrefix {
     pub key_prefix: String, // Go serializes []byte to base64 encoded string
 }
 
 // Origin: ibc.core.commitment.v1 (compiled proto)
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct MerkleRoot {
     pub hash: String, // Go serializes []byte to base64 encoded string
 }
 
 // Origin: ibc.core.commitment.v1 (compiled proto)
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
 pub struct MerklePath {
     pub key_path: Vec<String>,
 }
@@ -81,7 +81,7 @@ pub struct MerkleProof {
 }
 
 // Origin: ibc-rs/modules/src/ics02_client/height.rs (added JsonSchema and serde defaults)
-#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug, Eq, Copy)]
 pub struct Height {
     #[serde(default)]
     pub revision_number: u64,

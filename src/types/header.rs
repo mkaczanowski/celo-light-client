@@ -99,10 +99,7 @@ impl Header {
 
 impl FromRlp for Header {
     fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
-        match rlp::decode(&bytes) {
-            Ok(header) => Ok(header),
-            Err(err) => Err(Kind::RlpDecodeError.context(err).into()),
-        }
+        rlp::decode(&bytes).map_err(|e| Kind::RlpDecodeError.context(e).into())
     }
 }
 
