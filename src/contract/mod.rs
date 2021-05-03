@@ -841,7 +841,7 @@ pub fn verify_channel_state(
 
     // Build path (proof is used to validate the existance of value under that path)
     let channel_path = IcsPath::ChannelEnds(
-        PortId::from_str(&port_id).map_err(|e| StdError::generic_err(e.to_string()))?,
+        PortId::from_str(&port_id).map_err(to_generic_err)?,
         ChannelId::from_str(&channel_id).map_err(to_generic_err)?,
     )
     .to_string();
@@ -892,9 +892,8 @@ pub fn verify_packet_commitment(
 
     // Build path (proof is used to validate the existance of value under that path)
     let commitment_path = IcsPath::Commitments {
-        port_id: PortId::from_str(&port_id).map_err(|e| StdError::generic_err(e.to_string()))?,
-        channel_id: ChannelId::from_str(&channel_id)
-            .map_err(|e| StdError::generic_err(e.to_string()))?,
+        port_id: PortId::from_str(&port_id).map_err(to_generic_err)?,
+        channel_id: ChannelId::from_str(&channel_id).map_err(to_generic_err)?,
         sequence: Sequence::from(sequence),
     }
     .to_string();
@@ -945,9 +944,8 @@ pub fn verify_packet_acknowledgment(
 
     // Build path (proof is used to validate the existance of value under that path)
     let ack_path = IcsPath::Acks {
-        port_id: PortId::from_str(&port_id).map_err(|e| StdError::generic_err(e.to_string()))?,
-        channel_id: ChannelId::from_str(&channel_id)
-            .map_err(|e| StdError::generic_err(e.to_string()))?,
+        port_id: PortId::from_str(&port_id).map_err(to_generic_err)?,
+        channel_id: ChannelId::from_str(&channel_id).map_err(to_generic_err)?,
         sequence: Sequence::from(sequence),
     }
     .to_string();
@@ -997,9 +995,8 @@ pub fn verify_packet_receipt_absence(
 
     // Build path (proof is used to validate the existance of value under that path)
     let reciept_path = IcsPath::Receipts {
-        port_id: PortId::from_str(&port_id).map_err(|e| StdError::generic_err(e.to_string()))?,
-        channel_id: ChannelId::from_str(&channel_id)
-            .map_err(|e| StdError::generic_err(e.to_string()))?,
+        port_id: PortId::from_str(&port_id).map_err(to_generic_err)?,
+        channel_id: ChannelId::from_str(&channel_id).map_err(to_generic_err)?,
         sequence: Sequence::from(sequence),
     }
     .to_string();
@@ -1053,8 +1050,8 @@ pub fn verify_next_sequence_recv(
 
     // Build path (proof is used to validate the existance of value under that path)
     let next_sequence_recv_path = IcsPath::SeqRecvs(
-        PortId::from_str(&port_id).map_err(|e| StdError::generic_err(e.to_string()))?,
-        ChannelId::from_str(&channel_id).map_err(|e| StdError::generic_err(e.to_string()))?,
+        PortId::from_str(&port_id).map_err(to_generic_err)?,
+        ChannelId::from_str(&channel_id).map_err(to_generic_err)?,
     )
     .to_string();
 
