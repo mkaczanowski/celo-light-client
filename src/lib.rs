@@ -18,7 +18,6 @@ extern crate bls_crypto;
 extern crate algebra;
 extern crate anomaly;
 extern crate thiserror;
-extern crate cfg_if;
 
 pub use types::{
     header::Header,

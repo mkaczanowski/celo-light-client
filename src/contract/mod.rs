@@ -40,6 +40,55 @@ use cosmwasm_std::{HandleResponse, InitResponse, StdError, StdResult};
 
 use std::str::FromStr;
 
+// # A few notes on certain design decisions
+// ## Serialization
+// RLP is being used in a few methods, why can't we use JSON everywhere?
+//
+// CosmWasm doesn't accept floating point operations (see: `cosmwasm/packages/vm/src/middleware/deterministic.rs`)
+// and that's for a good reason. Even if you're not using floating point arithmetic explicilty,
+// some other library might do it behind the scenes. That's exactly what happens with serde json.
+//
+// For example to deserialize Celo `Header` type, a set of fields needs to be translated from
+// String to Int/BigInt (serialized message comes from celo-geth daemon). The following line would
+// implicitly use floating point arithmetic:
+// ```
+// Source: src/serialization/bytes.rs
+// let s: &str = Deserialize::deserialize(deserializer)?;
+// ```
+//
+// How can I check if my wasm binary uses floating points?
+// * gaia will fail to upload wasm code (validation will fail)
+// * run: `wasm2wat target/wasm32-unknown-unknown/release/celo_light_client.wasm  | grep f64`
+// 
+// Taken all the possible options I think the easiest way is to use RLP for the structs that fail
+// to serialize/deserialize via JSON (ie. Header, LightConsensusState)
+//
+// ## IBC
+// ### Proof
+// ICS-23 specifies the generic proof structure (ie. ExistenceProof). Without the other side of the
+// bridge (CosmosLC on CeloBlockchain) we can't say for sure what the proof structure is going to
+// be (TendermintProof, MerkleProof etc.) for sure.
+//
+// I've used MerkleProof + MerklePrefix as a placeholder to be revisited once we have the other side of the bridge
+// implemented
+//
+// ### Counterparty Consensus State
+// Essentially this is Cosmos/Tendermint consensus state coming from the other side of the bridge. For now it's almost empty datastructure,
+// use as a placeholder.
+//
+// ### Serialization
+// I assumed that proof and counterparty_consensus_state are encoded with JsonMarshaller.
+// It's likely that amino / protobuf binary encoding will be used...
+//
+// ### Vocabulary (hint for reader)
+// CeloLC on CosmosNetwork:
+// * proof - proof that CosmosConsensusState is stored on the TendermintLC in CeloBlockchain
+// * counterparty_consensus_state - CosmosConsensusState
+//
+// Tendermint LC on Celo Blockchain:
+// * proof - proof that CeloConsensusState is stored on CeloLC in CosmosNetwork
+// * counterparty_consensus_state - CeloConsensusState
+
 pub(crate) fn init(
     _deps: DepsMut,
     _env: Env,
@@ -633,26 +682,6 @@ pub fn check_misbehaviour_header(
         _ => return Ok(()),
     }
 }
-
-// NOTE regarding ALL verfiy functions:
-// * commitment_prefix              - I've assumed the prefix is of String type. It's type is dependant on the
-//                                    proof type we're using (ie. MerkleProof), see ICS-23. TO BE UPDATED
-// * proof                          - I've assumed the proof is of ics23::ExistenceProof type. Depending on what
-//                                    the other side of the bridge (tendermint LC on Celo) generates this may be
-//                                    a TendermintProof, MerkleProof or smth else. TO BE UPDATED
-// * counterparty_consensus_state   - Essentially this is Cosmos/Tendermint consensus state coming from the other side
-//                                    of the bridge. For now it's almost empty datastructure. TO BE UPDATED
-// * serialisation                  - I've assumed the proof and counterparty_consensus_state are encoded with JsonMarshaller.
-//                                    Though, it's likely the amino / protobuf binary encoding will
-//                                    be used (if so, then is prost lib WASM compatible?). TO BE UPDATED
-//
-// Vocabulary explanation for CeloLC on CosmosNetwork:
-// * proof - proof that CosmosConsensusState is stored on the TendermintLC in CeloBlockchain
-// * counterparty_consensus_state - CosmosConsensusState
-//
-// Vocabulary explanation for Tendermint LC on Celo Blockchain:
-// * proof - proof that CeloConsensusState is stored on CeloLC in CosmosNetwork
-// * counterparty_consensus_state - CeloConsensusState
 
 pub fn verify_client_state(
     _deps: DepsMut,
