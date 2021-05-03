@@ -6,7 +6,6 @@ pub mod bls;
 pub mod traits;
 pub mod macros;
 pub mod errors;
-pub mod contract;
 
 #[macro_use]
 extern crate serde;
@@ -42,10 +41,11 @@ pub use traits::{
     FromRlp
 };
 
+#[cfg(all(feature = "wasm_contract"))]
+pub mod contract;
+
+#[cfg(all(feature = "wasm_contract"))]
 pub use contract::*;
 
-/// WASM methods exposed to be used by CosmWasm handler
-/// All methods are thin wrapper around actual contract contained in
-/// contract module.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "wasm_contract", target_arch = "wasm32"))]
 cosmwasm_std::create_entry_points!(contract);

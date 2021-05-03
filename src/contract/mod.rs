@@ -74,7 +74,7 @@ use std::str::FromStr;
 // I assumed that proof and counterparty_consensus_state are encoded with JsonMarshaller.
 // It's likely that amino / protobuf binary encoding will be used...
 //
-// ### Vocabulary (hint for reader)
+// ### Vocabulary (hint for the reader)
 // CeloLC on CosmosNetwork:
 // * proof - proof that CosmosConsensusState is stored on the TendermintLC in CeloBlockchain
 // * counterparty_consensus_state - CosmosConsensusState
