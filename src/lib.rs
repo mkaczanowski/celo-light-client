@@ -26,8 +26,8 @@ pub use types::{
     istanbul::SerializedPublicKey,
     istanbul::IstanbulExtra,
     state::Validator,
-    state::StateEntry,
-    state::StateConfig
+    state::Snapshot,
+    state::Config
 };
 pub use istanbul::{
     get_epoch_number,

@@ -1,33 +1,27 @@
 use crate::bls::verify_aggregated_seal;
 use crate::errors::{Error, Kind};
-use crate::istanbul::{get_epoch_number, is_last_block_of_epoch};
+use crate::istanbul::is_last_block_of_epoch;
 use crate::types::header::{Address, Header};
 use crate::types::istanbul::IstanbulExtra;
-use crate::types::state::{StateConfig, StateEntry, Validator};
+use crate::types::state::{Snapshot, Validator};
 use num::cast::ToPrimitive;
 use num_bigint::BigInt as Integer;
 use num_traits::Zero;
+use crate::traits::StateConfig;
 use std::collections::HashMap;
 
-pub struct State {
-    entry: StateEntry,
-    config: StateConfig,
+pub struct State<'a>{
+    snapshot: Snapshot,
+    config: &'a dyn StateConfig,
 }
 
-impl State {
-    pub fn new(config: StateConfig) -> Self {
-        State {
-            entry: StateEntry::new(),
-            config,
-        }
+impl<'a> State<'a> {
+    pub fn new(snapshot: Snapshot, config: &'a dyn StateConfig) -> Self {
+        State { snapshot, config }
     }
 
-    pub fn from_entry(entry: StateEntry, config: StateConfig) -> Self {
-        State { entry, config }
-    }
-
-    pub fn entry(&self) -> &StateEntry {
-        &self.entry
+    pub fn snapshot(&self) -> &Snapshot {
+        &self.snapshot
     }
 
     pub fn add_validators(&mut self, validators: Vec<Validator>) -> bool {
@@ -38,13 +32,13 @@ impl State {
         }
 
         // Verify that the validators to add is not already in the valset
-        for v in self.entry.validators.iter() {
+        for v in self.snapshot.validators.iter() {
             if new_address_map.contains_key(&v.address) {
                 return false;
             }
         }
 
-        self.entry.validators.extend(validators);
+        self.snapshot.validators.extend(validators);
 
         return true;
     }
@@ -54,12 +48,12 @@ impl State {
             return true;
         }
 
-        if removed_validators.bits() > self.entry.validators.len() as u64 {
+        if removed_validators.bits() > self.snapshot.validators.len() as u64 {
             return false;
         }
 
         let filtered_validators: Vec<Validator> = self
-            .entry
+            .snapshot
             .validators
             .iter()
             .enumerate()
@@ -67,23 +61,23 @@ impl State {
             .map(|(_, v)| v.to_owned())
             .collect();
 
-        self.entry.validators = filtered_validators;
+        self.snapshot.validators = filtered_validators;
 
         return true;
     }
 
     pub fn verify_header(&self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         // assert header height is newer than any we know
-        if !(header.number.to_u64().unwrap() > self.entry.number) {
+        if !(header.number.to_u64().unwrap() > self.snapshot.number) {
             return Err(Kind::HeaderVerificationError {
                 msg: "header height should be greater than the last one stored in state",
             }
             .into());
         }
 
-        if self.config.verify_header_timestamp {
+        if self.config.verify_header_timestamp() {
             // assert header timestamp is past current timestamp
-            if !(header.time > self.entry.timestamp) {
+            if !(header.time > self.snapshot.timestamp) {
                 return Err(Kind::HeaderVerificationError {
                     msg: "header timestamp should be greater than the last one stored in state",
                 }
@@ -91,7 +85,7 @@ impl State {
             }
 
             // don't waste time checking blocks from the future
-            if header.time > current_timestamp + self.config.allowed_clock_skew {
+            if header.time > current_timestamp + self.config.allowed_clock_skew() {
                 return Err(Kind::HeaderVerificationError {
                     msg: "header timestamp is set too far in the future",
                 }
@@ -106,13 +100,13 @@ impl State {
         let header_hash = header.hash()?;
         let extra = IstanbulExtra::from_rlp(&header.extra)?;
 
-        verify_aggregated_seal(header_hash, &self.entry.validators, extra.aggregated_seal)
+        verify_aggregated_seal(header_hash, &self.snapshot.validators, extra.aggregated_seal)
     }
 
     pub fn insert_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         let block_num = header.number.to_u64().unwrap();
 
-        if is_last_block_of_epoch(block_num, self.config.epoch_size) {
+        if is_last_block_of_epoch(block_num, self.config.epoch_size()) {
             // The validator set is about to be updated with epoch header
             self.store_epoch_header(header, current_timestamp)
         } else {
@@ -127,14 +121,14 @@ impl State {
         current_timestamp: u64,
     ) -> Result<(), Error> {
         // genesis block is valid dead end
-        if self.config.verify_non_epoch_headers && !header.number.is_zero() {
+        if self.config.verify_non_epoch_headers() && !header.number.is_zero() {
             self.verify_header(&header, current_timestamp)?
         }
 
         let extra = IstanbulExtra::from_rlp(&header.extra)?;
-        let entry = StateEntry {
+        let snapshot = Snapshot {
             // The validator state stays unchanged (ONLY updated with epoch header)
-            validators: self.entry.validators.clone(),
+            validators: self.snapshot.validators.clone(),
 
             // Update the header related fields
             number: header.number.to_u64().unwrap(),
@@ -143,12 +137,12 @@ impl State {
             aggregated_seal: extra.aggregated_seal.clone(),
         };
 
-        self.update_state_entry(entry)
+        self.update_state_snapshot(snapshot)
     }
 
     fn store_epoch_header(&mut self, header: &Header, current_timestamp: u64) -> Result<(), Error> {
         // genesis block is valid dead end
-        if self.config.verify_epoch_headers && !header.number.is_zero() {
+        if self.config.verify_epoch_headers() && !header.number.is_zero() {
             self.verify_header(&header, current_timestamp)?
         }
 
@@ -188,23 +182,23 @@ impl State {
             .into());
         }
 
-        let entry = StateEntry {
+        let snapshot = Snapshot {
             number: header.number.to_u64().unwrap(),
             timestamp: header.time,
-            validators: self.entry.validators.clone(),
+            validators: self.snapshot.validators.clone(),
             hash: header_hash,
             aggregated_seal: extra.aggregated_seal,
         };
 
-        self.update_state_entry(entry)
+        self.update_state_snapshot(snapshot)
     }
 
-    fn update_state_entry(&mut self, entry: StateEntry) -> Result<(), Error> {
+    fn update_state_snapshot(&mut self, snapshot: Snapshot) -> Result<(), Error> {
         // NOTE: right now we store only the last state entry but we could add
         // a feature to store X past entries for querying / debugging
 
         // update local state
-        self.entry = entry;
+        self.snapshot = snapshot;
 
         Ok(())
     }
@@ -216,6 +210,7 @@ mod tests {
     use crate::traits::{DefaultFrom, FromBytes, FromRlp};
     use crate::types::header::{Hash, ADDRESS_LENGTH};
     use crate::types::istanbul::{IstanbulAggregatedSeal, SerializedPublicKey};
+    use crate::types::state::Config;
     use secp256k1::{rand::rngs::OsRng, PublicKey, Secp256k1, SecretKey};
     use sha3::{Digest, Keccak256};
     use std::{cmp, cmp::Ordering};
@@ -239,19 +234,14 @@ mod tests {
         pub accounts: HashMap<String, (SecretKey, PublicKey)>,
     }
 
-    fn state_config() -> StateConfig {
-        StateConfig {
+    fn state_config() -> Config {
+        Config {
             epoch_size: 123,
             allowed_clock_skew: 123,
-            trusting_period: 123,
-            upgrade_path: vec!["some".to_string(), "path".to_string()],
 
             verify_epoch_headers: true,
             verify_non_epoch_headers: true,
             verify_header_timestamp: true,
-
-            allow_update_after_misbehavior: false,
-            allow_update_after_expiry: false,
         }
     }
 
@@ -276,8 +266,8 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_state_entry() {
-        let entry = StateEntry {
+    fn test_encode_state_snapshot() {
+        let snapshot = Snapshot {
             validators: vec![
                 Validator {
                     address: Address::default(),
@@ -294,15 +284,17 @@ mod tests {
             aggregated_seal: IstanbulAggregatedSeal::new(),
         };
 
-        let encoded = rlp::encode(&entry);
-        let decoded = StateEntry::from_rlp(&encoded).unwrap();
+        let encoded = rlp::encode(&snapshot);
+        let decoded = Snapshot::from_rlp(&encoded).unwrap();
 
-        assert_eq!(entry, decoded);
+        assert_eq!(snapshot, decoded);
     }
 
     #[test]
     fn test_add_remove() {
-        let mut state = State::new(state_config());
+        let snapshot = Snapshot::new();
+        let config = state_config();
+        let mut state = State::new(snapshot, &config);
         let mut result = state.add_validators(vec![Validator {
             address: bytes_to_address(&vec![0x3 as u8]),
             public_key: SerializedPublicKey::default(),
@@ -322,11 +314,11 @@ mod tests {
         ]);
 
         assert_eq!(result, true);
-        assert_eq!(state.entry.validators.len(), 3);
+        assert_eq!(state.snapshot.validators.len(), 3);
 
         // verify ordering
         let current_addresses: Vec<Address> = state
-            .entry
+            .snapshot
             .validators
             .iter()
             .map(|val| val.address)
@@ -341,17 +333,17 @@ mod tests {
         // remove first validator
         result = state.remove_validators(&Integer::from(1));
         assert_eq!(result, true);
-        assert_eq!(state.entry.validators.len(), 2);
+        assert_eq!(state.snapshot.validators.len(), 2);
 
         // remove second validator
         result = state.remove_validators(&Integer::from(2));
         assert_eq!(result, true);
-        assert_eq!(state.entry.validators.len(), 1);
+        assert_eq!(state.snapshot.validators.len(), 1);
 
         // remove third validator
         result = state.remove_validators(&Integer::from(1));
         assert_eq!(result, true);
-        assert_eq!(state.entry.validators.len(), 0);
+        assert_eq!(state.snapshot.validators.len(), 0);
     }
 
     #[test]
@@ -411,8 +403,10 @@ mod tests {
         ];
 
         for test in tests {
+            let snapshot = Snapshot::new();
+            let config = state_config();
             let mut accounts = AccountPool::new();
-            let mut state = State::new(state_config());
+            let mut state = State::new(snapshot, &config);
 
             let validators = convert_val_names_to_validators(&mut accounts, test.validators);
             state.add_validators(validators.clone());
@@ -422,7 +416,7 @@ mod tests {
                     convert_val_names_to_validators(&mut accounts, diff.added_validators);
                 let removed_validators = convert_val_names_to_removed_validators(
                     &mut accounts,
-                    &state.entry.validators,
+                    &state.snapshot.validators,
                     diff.removed_validators,
                 );
 
@@ -431,7 +425,7 @@ mod tests {
             }
 
             let results = convert_val_names_to_validators(&mut accounts, test.results);
-            assert_eq!(compare(state.entry.validators, results), Ordering::Equal);
+            assert_eq!(compare(state.snapshot.validators, results), Ordering::Equal);
         }
     }
 

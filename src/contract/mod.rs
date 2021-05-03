@@ -19,20 +19,14 @@ use crate::contract::{
         VerifyPacketCommitmentResult, VerifyPacketReceiptAbsenceResult,
         VerifyUpgradeAndUpdateStateResult,
     },
+    types::state::{LightClientState, LightConsensusState},
     types::wasm::{
         ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour,
         WasmHeader,
     },
-    util::{u64_to_big_endian, wrap_response, to_generic_err},
+    util::{to_generic_err, u64_to_big_endian, wrap_response},
 };
-use crate::{
-    state::State,
-    traits::ToRlp,
-    types::{
-        header::Header,
-        state::{StateConfig as LightClientState, StateEntry as LightConsensusState},
-    },
-};
+use crate::{state::State, traits::ToRlp, types::header::Header};
 
 use cosmwasm_std::{attr, to_vec, Binary};
 use cosmwasm_std::{Deps, DepsMut, Env, MessageInfo};
@@ -59,7 +53,7 @@ use std::str::FromStr;
 // How can I check if my wasm binary uses floating points?
 // * gaia will fail to upload wasm code (validation will fail)
 // * run: `wasm2wat target/wasm32-unknown-unknown/release/celo_light_client.wasm  | grep f64`
-// 
+//
 // Taken all the possible options I think the easiest way is to use RLP for the structs that fail
 // to serialize/deserialize via JSON (ie. Header, LightConsensusState)
 //
@@ -424,7 +418,7 @@ fn check_header_and_update_state(
     let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
 
     // Ingest new header
-    let mut state: State = State::from_entry(light_consensus_state, light_client_state);
+    let mut state: State = State::new(light_consensus_state, &light_client_state);
     match state.insert_header(&header, current_timestamp) {
         Err(e) => {
             return Err(StdError::generic_err(format!(
@@ -439,7 +433,7 @@ fn check_header_and_update_state(
     let new_client_state = me.clone();
     let new_consensus_state = ConsensusState {
         code_id: consensus_state.code_id,
-        data: base64::encode(state.entry().to_rlp().as_slice()),
+        data: base64::encode(state.snapshot().to_rlp().as_slice()),
         timestamp: header.time,
         root: MerkleRoot {
             hash: base64::encode(header.root.to_vec().as_slice()),
@@ -460,7 +454,7 @@ fn check_header_and_update_state(
         messages: vec![],
         attributes: vec![
             attr("action", "update_block"),
-            attr("last_consensus_state_height", state.entry().number),
+            attr("last_consensus_state_height", state.snapshot().number),
         ],
         data: Some(response_data),
     })
@@ -671,7 +665,7 @@ pub fn check_misbehaviour_header(
     let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
 
     // Verify header
-    let state: State = State::from_entry(light_consensus_state, light_client_state);
+    let state: State = State::new(light_consensus_state, &light_client_state);
     match state.verify_header_seal(&header) {
         Err(e) => {
             return Err(StdError::generic_err(format!(

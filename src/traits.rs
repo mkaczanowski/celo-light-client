@@ -30,3 +30,12 @@ pub trait SerializableStorage<T>: Storage {
     fn serialize(&self) -> Vec<u8>;
     fn deserialize(bytes: &[u8]) -> Result<Box<T>, Error>;
 }
+
+pub trait StateConfig {
+    fn epoch_size(&self) -> u64;
+    fn allowed_clock_skew(&self) -> u64;
+
+    fn verify_epoch_headers(&self) -> bool;
+    fn verify_non_epoch_headers(&self) -> bool;
+    fn verify_header_timestamp(&self) -> bool;
+}

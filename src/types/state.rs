@@ -1,11 +1,12 @@
 use crate::bls::verify_aggregated_seal;
 use crate::errors::{Error, Kind};
 use crate::serialization::rlp::{rlp_field_from_bytes, rlp_list_field_from_bytes};
-use crate::traits::{FromRlp, ToRlp};
+use crate::traits::{FromRlp, StateConfig, ToRlp};
 use crate::types::header::{Address, Hash};
 use crate::types::istanbul::{IstanbulAggregatedSeal, SerializedPublicKey};
 
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use rlp_derive::{RlpDecodable, RlpEncodable};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Validator {
@@ -46,69 +47,23 @@ impl FromRlp for Vec<Validator> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub struct StateConfig {
+#[derive(Serialize, Deserialize, RlpEncodable, RlpDecodable, Clone, PartialEq, Debug)]
+pub struct Config {
     pub epoch_size: u64,
     pub allowed_clock_skew: u64,
-    pub trusting_period: u64,
-    pub upgrade_path: Vec<String>,
 
     pub verify_epoch_headers: bool,
     pub verify_non_epoch_headers: bool,
     pub verify_header_timestamp: bool,
-
-    pub allow_update_after_misbehavior: bool,
-    pub allow_update_after_expiry: bool,
 }
 
-impl Encodable for StateConfig {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(9);
-
-        s.append(&self.epoch_size);
-        s.append(&self.allowed_clock_skew);
-        s.append(&self.trusting_period);
-
-        s.begin_list(self.upgrade_path.len());
-        for path in self.upgrade_path.iter() {
-            s.append(path);
-        }
-
-        s.append(&self.verify_epoch_headers);
-        s.append(&self.verify_non_epoch_headers);
-        s.append(&self.verify_header_timestamp);
-
-        s.append(&self.allow_update_after_misbehavior);
-        s.append(&self.allow_update_after_expiry);
-    }
-}
-
-impl Decodable for StateConfig {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        let upgrade_path: Result<Vec<String>, DecoderError> =
-            rlp.at(3)?.iter().map(|r| r.as_val()).collect();
-
-        Ok(StateConfig {
-            epoch_size: rlp.val_at(0)?,
-            allowed_clock_skew: rlp.val_at(1)?,
-            trusting_period: rlp.val_at(2)?,
-            upgrade_path: upgrade_path?,
-            verify_epoch_headers: rlp.val_at(4)?,
-            verify_non_epoch_headers: rlp.val_at(5)?,
-            verify_header_timestamp: rlp.val_at(6)?,
-            allow_update_after_misbehavior: rlp.val_at(7)?,
-            allow_update_after_expiry: rlp.val_at(8)?,
-        })
-    }
-}
-
-impl ToRlp for StateConfig {
+impl ToRlp for Config {
     fn to_rlp(&self) -> Vec<u8> {
         rlp::encode(self)
     }
 }
 
-impl FromRlp for StateConfig {
+impl FromRlp for Config {
     fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
         match rlp::decode(&bytes) {
             Ok(config) => Ok(config),
@@ -117,8 +72,27 @@ impl FromRlp for StateConfig {
     }
 }
 
+impl StateConfig for Config {
+    fn epoch_size(&self) -> u64 {
+        self.epoch_size
+    }
+    fn allowed_clock_skew(&self) -> u64 {
+        self.allowed_clock_skew
+    }
+
+    fn verify_epoch_headers(&self) -> bool {
+        self.verify_epoch_headers
+    }
+    fn verify_non_epoch_headers(&self) -> bool {
+        self.verify_non_epoch_headers
+    }
+    fn verify_header_timestamp(&self) -> bool {
+        self.verify_header_timestamp
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub struct StateEntry {
+pub struct Snapshot {
     pub number: u64,                // block number where the snapshot was created
     pub timestamp: u64,             // blocks creation time
     pub validators: Vec<Validator>, // set of authorized validators at where the snapshot was created
@@ -128,7 +102,7 @@ pub struct StateEntry {
     pub aggregated_seal: IstanbulAggregatedSeal, // block aggregated_seal where the snapshot was created
 }
 
-impl Encodable for StateEntry {
+impl Encodable for Snapshot {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(5);
 
@@ -145,12 +119,12 @@ impl Encodable for StateEntry {
     }
 }
 
-impl Decodable for StateEntry {
+impl Decodable for Snapshot {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let validators: Result<Vec<Validator>, DecoderError> =
             rlp.at(2)?.iter().map(|r| r.as_val()).collect();
 
-        Ok(StateEntry {
+        Ok(Snapshot {
             validators: validators?,
             number: rlp.val_at(0)?,
             timestamp: rlp.val_at(1)?,
@@ -160,7 +134,7 @@ impl Decodable for StateEntry {
     }
 }
 
-impl StateEntry {
+impl Snapshot {
     pub fn new() -> Self {
         Self {
             number: 0,
@@ -176,13 +150,13 @@ impl StateEntry {
     }
 }
 
-impl ToRlp for StateEntry {
+impl ToRlp for Snapshot {
     fn to_rlp(&self) -> Vec<u8> {
         rlp::encode(self)
     }
 }
 
-impl FromRlp for StateEntry {
+impl FromRlp for Snapshot {
     fn from_rlp(bytes: &[u8]) -> Result<Self, Error> {
         match rlp::decode(&bytes) {
             Ok(header) => Ok(header),

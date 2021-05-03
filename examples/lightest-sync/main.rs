@@ -75,20 +75,16 @@ async fn main(){
 
     // setup state container
     info!("Setting up storage");
-    let state_config = StateConfig {
+    let state_config = Config {
        epoch_size,
        allowed_clock_skew: 5,
-       trusting_period: 100,
-       upgrade_path: vec![],
 
        verify_epoch_headers: validate_all_headers,
        verify_non_epoch_headers: validate_all_headers,
        verify_header_timestamp: true,
-
-       allow_update_after_misbehavior: false,
-       allow_update_after_expiry: false,
     };
-    let mut state = State::new(state_config);
+    let snapshot = Snapshot::new();
+    let mut state = State::new(snapshot, &state_config);
 
     info!("Fetching latest block header from: {}", addr);
     let current_block_header: Header = relayer.get_block_header_by_number("latest").await.unwrap();
