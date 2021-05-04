@@ -41,11 +41,11 @@ pub use traits::{
     FromRlp
 };
 
-#[cfg(all(feature = "wasm_contract"))]
+#[cfg(feature = "wasm-contract")]
 pub mod contract;
 
-#[cfg(all(feature = "wasm_contract"))]
+#[cfg(feature = "wasm-contract")]
 pub use contract::*;
 
-#[cfg(all(feature = "wasm_contract", target_arch = "wasm32"))]
+#[cfg(all(feature = "wasm-contract", target_arch = "wasm32"))]
 cosmwasm_std::create_entry_points!(contract);
