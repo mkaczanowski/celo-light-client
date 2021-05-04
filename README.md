@@ -4,7 +4,7 @@
 [travis]: https://travis-ci.org/ChorusOne/celo-light-client/
 
 # Celo Light Client
-The library provides a [lightest-sync](https://docs.celo.org/celo-codebase/protocol/consensus/ultralight-sync) mode, that enables quick, secure and cheap way to synchronize IBFT consensus state with a Celo Blockchain node.
+The library provides a [lightest-sync](https://docs.celo.org/celo-codebase/protocol/consensus/ultralight-sync) mode, that enables a quick, secure, and cheap way to synchronize IBFT consensus state with a Celo Blockchain node.
 
 The codebase is split into two parts:
 * `library` - a subset of Celo Blockchain building blocks, such as data structures (ie. Header, IBFT) or functionalities (ie. serialization, consensus state management)
@@ -15,7 +15,7 @@ In the nutshell, the validator set for the current epoch is computed by download
 Ultralight mode download approximately 30,000 times fewer headers than light nodes in order to sync the latest block (assuming 3-second block periods and 1-day epochs).
 
 ### Example
-An example program that utilizes `lightest-sync` library is placed in the `examples/lightest-sync`. It uses [celo-blockchain node](https://github.com/celo-org/celo-blockchain) to fetch epoch headers, built up the validator set and verify the latest available header.
+An example program that utilizes `lightest-sync` library is placed in the `examples/lightest-sync`. It uses [celo-blockchain node](https://github.com/celo-org/celo-blockchain) to fetch epoch headers, built up the validator set, and verify the latest available header.
 
 You may spawn up example program via:
 ```
