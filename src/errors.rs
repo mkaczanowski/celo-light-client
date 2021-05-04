@@ -32,17 +32,8 @@ pub enum Kind {
     #[error("BLS invalid public key")]
     BlsInvalidPublicKey,
 
-    #[error("encountered a block with time set in the future")]
+    #[error("header verification failed: {msg}")]
     HeaderVerificationError { msg: &'static str },
-
-    #[error("key not found")]
-    KeyNotFound,
-
-    #[error("db error")]
-    DbError,
-
-    #[error("generic serialization error")]
-    GenericSerializationError,
 
     #[error("unkown error occurred")]
     Unknown,
