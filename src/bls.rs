@@ -8,6 +8,7 @@ use crate::types::state::Validator;
 use bls_crypto::{hash_to_curve::try_and_increment::DIRECT_HASH_TO_G1, PublicKey, Signature};
 use num_bigint::BigInt as Integer;
 
+/// Uses BLS signature verification to validate header against provided validator set
 pub fn verify_aggregated_seal(
     header_hash: Hash,
     validators: &[Validator],

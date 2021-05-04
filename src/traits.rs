@@ -21,10 +21,19 @@ pub trait FromRlp {
 }
 
 pub trait StateConfig {
+    /// Epoch size expressed in number of blocks
     fn epoch_size(&self) -> u64;
+
+    /// Defines how far block timestamp can go in the future
     fn allowed_clock_skew(&self) -> u64;
 
+    /// Whether to validate (BLS signature) epoch headers. It should always be set to true.
     fn verify_epoch_headers(&self) -> bool;
+
+    /// Whether to validate (BLS signature) non epoch headers. Since non-epoch don't affect
+    /// validator set, it's acceptable to disable validation
     fn verify_non_epoch_headers(&self) -> bool;
+
+    /// Whether to verify headers time against current time. It's recommended to keep it true
     fn verify_header_timestamp(&self) -> bool;
 }

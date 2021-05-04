@@ -29,6 +29,7 @@ pub enum IstanbulMsg {
     RoundChange,
 }
 
+/// IstanbulAggregatedSeal contains the aggregated BLS signature created via IBFT consensus
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct IstanbulAggregatedSeal {
@@ -80,29 +81,30 @@ impl Decodable for IstanbulAggregatedSeal {
     }
 }
 
+/// IstanbulExtra represents IBFT consensus state data
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct IstanbulExtra {
-    /// AddedValidators are the validators that have been added in the block
+    /// The validators that have been added in the block
     #[serde(with = "crate::serialization::bytes::hexvec")]
     pub added_validators: Vec<Address>,
 
-    /// AddedValidatorsPublicKeys are the BLS public keys for the validators added in the block
+    /// The BLS public keys for the validators added in the block
     #[serde(with = "crate::serialization::bytes::hexvec")]
     pub added_validators_public_keys: Vec<SerializedPublicKey>,
 
-    /// RemovedValidators is a bitmap having an active bit for each removed validator in the block
+    /// Bitmap having an active bit for each removed validator in the block
     #[serde(with = "crate::serialization::bytes::hexbigint")]
     pub removed_validators: Integer,
 
-    /// Seal is an ECDSA signature by the proposer
+    /// ECDSA signature by the proposer
     #[serde(with = "crate::serialization::bytes::hexstring")]
     pub seal: Vec<u8>,
 
-    /// AggregatedSeal contains the aggregated BLS signature created via IBFT consensus.
+    /// Contains the aggregated BLS signature created via IBFT consensus
     pub aggregated_seal: IstanbulAggregatedSeal,
 
-    /// ParentAggregatedSeal contains and aggregated BLS signature for the previous block.
+    /// Contains and aggregated BLS signature for the previous block
     pub parent_aggregated_seal: IstanbulAggregatedSeal,
 }
 

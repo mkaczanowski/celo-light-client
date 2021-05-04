@@ -1,11 +1,17 @@
-pub mod types;
-pub mod serialization;
-pub mod istanbul;
-pub mod state;
-pub mod bls;
-pub mod traits;
-pub mod macros;
-pub mod errors;
+//! This library contains a portion of Celo Blockchain logic and structures, that is primarily
+//! used by Celo Light client contract deployed on Cosmos Network.
+//!
+//! In particular, the library provides the LightestSync method to quickly, securely and cheaply
+//! synchronize IBFT consensus state with Celo chain.
+
+mod types;
+mod serialization;
+mod state;
+mod istanbul;
+mod bls;
+mod traits;
+mod macros;
+mod errors;
 
 #[macro_use]
 extern crate serde;
@@ -40,12 +46,10 @@ pub use traits::{
     ToRlp,
     FromRlp
 };
+pub use bls::verify_aggregated_seal;
 
 #[cfg(feature = "wasm-contract")]
 pub mod contract;
-
-#[cfg(feature = "wasm-contract")]
-pub use contract::*;
 
 #[cfg(all(feature = "wasm-contract", target_arch = "wasm32"))]
 cosmwasm_std::create_entry_points!(contract);

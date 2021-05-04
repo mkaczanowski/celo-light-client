@@ -28,6 +28,7 @@ pub type Address = [u8; ADDRESS_LENGTH];
 /// Bloom represents a 2048 bit bloom filter
 pub type Bloom = [u8; BLOOM_BYTE_LENGTH];
 
+/// Header contains block metadata in Celo Blockchain
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Header {

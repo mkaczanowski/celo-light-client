@@ -1,7 +1,7 @@
-pub mod serialization;
-pub mod store;
 pub mod types;
-pub mod util;
+mod serialization;
+mod util;
+mod store;
 
 use crate::contract::{
     serialization::{from_base64, from_base64_json_slice, from_base64_rlp},

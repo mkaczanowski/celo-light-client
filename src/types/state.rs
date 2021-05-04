@@ -8,6 +8,7 @@ use crate::types::istanbul::{IstanbulAggregatedSeal, SerializedPublicKey};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use rlp_derive::{RlpDecodable, RlpEncodable};
 
+/// Validator identifies block producer by public key and address
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Validator {
     #[serde(with = "crate::serialization::bytes::hexstring")]
@@ -47,11 +48,11 @@ impl FromRlp for Vec<Validator> {
     }
 }
 
+/// Config contains state related configuration flags
 #[derive(Serialize, Deserialize, RlpEncodable, RlpDecodable, Clone, PartialEq, Debug)]
 pub struct Config {
     pub epoch_size: u64,
     pub allowed_clock_skew: u64,
-
     pub verify_epoch_headers: bool,
     pub verify_non_epoch_headers: bool,
     pub verify_header_timestamp: bool,
@@ -88,15 +89,25 @@ impl StateConfig for Config {
     }
 }
 
+/// Snapshot represents an IBFT consensus state at specified block height
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Snapshot {
-    pub number: u64,                // block number where the snapshot was created
-    pub timestamp: u64,             // blocks creation time
-    pub validators: Vec<Validator>, // set of authorized validators at where the snapshot was created
+    /// Block number at which the snapshot was created
+    pub number: u64,
 
-    // Hash and aggregated seal are required to validate the header against the validator set.
-    pub hash: Hash, // block hash where the snapshot was created
-    pub aggregated_seal: IstanbulAggregatedSeal, // block aggregated_seal where the snapshot was created
+    /// Block creation time
+    pub timestamp: u64,
+
+    /// Snapshot of current validator set
+    pub validators: Vec<Validator>,
+
+    // Hash and aggregated seal are required to validate the header against the validator set
+
+    /// Block hash
+    pub hash: Hash,
+
+    /// Block aggregated seal
+    pub aggregated_seal: IstanbulAggregatedSeal,
 }
 
 impl Encodable for Snapshot {

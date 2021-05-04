@@ -10,6 +10,7 @@ use num_bigint::BigInt as Integer;
 use num_traits::Zero;
 use std::collections::HashMap;
 
+/// State takes care of managing the IBFT consensus state
 pub struct State<'a> {
     snapshot: Snapshot,
     config: &'a dyn StateConfig,
