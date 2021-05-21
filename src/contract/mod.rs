@@ -1,7 +1,7 @@
-pub mod types;
 mod serialization;
-mod util;
 mod store;
+pub mod types;
+mod util;
 
 use crate::contract::{
     serialization::{from_base64, from_base64_json_slice, from_base64_rlp},
@@ -13,15 +13,17 @@ use crate::contract::{
     },
     types::msg::{
         CheckHeaderAndUpdateStateResult, CheckMisbehaviourAndUpdateStateResult,
+        CheckSubstituteAndUpdateStatePhase, CheckSubstituteAndUpdateStateResultPost,
+        CheckSubstituteAndUpdateStateResultPre, CheckSubstituteAndUpdateStateStatus,
         ClientStateCallResponseResult, HandleMsg, InitializeStateResult, ProcessedTimeResponse,
-        QueryMsg, VerifyChannelStateResult, VerifyClientConsensusStateResult,
+        QueryMsg, StatusResult, VerifyChannelStateResult, VerifyClientConsensusStateResult,
         VerifyClientStateResult, VerifyConnectionStateResult, VerifyPacketAcknowledgementResult,
         VerifyPacketCommitmentResult, VerifyPacketReceiptAbsenceResult,
         VerifyUpgradeAndUpdateStateResult,
     },
     types::state::{LightClientState, LightConsensusState},
     types::wasm::{
-        ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour,
+        ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour, Status,
         WasmHeader,
     },
     util::{to_generic_err, u64_to_big_endian, wrap_response},
@@ -343,6 +345,29 @@ pub(crate) fn handle(
             next_sequence_recv,
             consensus_state,
         ),
+
+        HandleMsg::CheckSubstituteAndUpdateState {
+            me,
+            substitute_client_state,
+            consensus_state,
+            initial_height,
+            phase,
+            status,
+        } => check_substitute_client_state(
+            deps,
+            env,
+            me,
+            substitute_client_state,
+            consensus_state,
+            initial_height,
+            phase,
+            status,
+        ),
+
+        HandleMsg::Status {
+            me,
+            consensus_state,
+        } => status(deps, env, me, consensus_state),
     }
 }
 
@@ -380,7 +405,11 @@ fn init_contract(
     }
 
     // set processed time with initial consensus state height equal to initial client state's latest height
-    set_processed_time(deps.storage, me.latest_height.unwrap(), env.block.time)?;
+    set_processed_time(
+        deps.storage,
+        me.latest_height.unwrap(),
+        env.block.time,
+    )?;
 
     // Update the state
     let response_data = Binary(to_vec(&InitializeStateResult {
@@ -484,7 +513,11 @@ fn check_proposed_header(
         // No softer validation for expired clients
         return check_header_and_update_state(deps, env, new_client_state, consensus_state, header);
     } else if light_client_state.allow_update_after_expiry
-        && consensus_state.timestamp + light_client_state.trusting_period > current_timestamp
+        && is_expired(
+            current_timestamp,
+            consensus_state.timestamp,
+            &light_client_state,
+        )
     {
         // If client is expired, lets perform full validation
         return check_header_and_update_state(deps, env, new_client_state, consensus_state, header);
@@ -530,9 +563,11 @@ pub fn verify_upgrade_and_update_state(
     // Check consensus state expiration
     let current_timestamp: u64 = env.block.time;
     let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
-    if last_height_consensus_state.timestamp + light_client_state.trusting_period
-        > current_timestamp
-    {
+    if is_expired(
+        current_timestamp,
+        last_height_consensus_state.timestamp,
+        &light_client_state,
+    ) {
         return Err(StdError::generic_err("cannot upgrade an expired client"));
     }
 
@@ -1074,6 +1109,190 @@ pub fn verify_next_sequence_recv(
     )
 }
 
+pub fn check_substitute_client_state(
+    deps: DepsMut,
+    env: Env,
+    me: ClientState,
+    substitute_client_state: ClientState,
+    consensus_state: ConsensusState,
+    initial_height: Height,
+    phase: CheckSubstituteAndUpdateStatePhase,
+    status: Vec<CheckSubstituteAndUpdateStateStatus>,
+) -> Result<HandleResponse, StdError> {
+    match phase {
+        CheckSubstituteAndUpdateStatePhase::Pre => check_substitute_client_state_pre(
+            deps,
+            env,
+            me,
+            substitute_client_state,
+            consensus_state,
+            initial_height,
+        ),
+
+        CheckSubstituteAndUpdateStatePhase::Post => check_substitute_client_state_post(
+            deps,
+            env,
+            me,
+            substitute_client_state,
+            consensus_state,
+            initial_height,
+            status,
+        ),
+    }
+}
+
+fn check_substitute_client_state_pre(
+    _deps: DepsMut,
+    env: Env,
+    me: ClientState,
+    substitute_client_state: ClientState,
+    subject_consensus_state: ConsensusState,
+    initial_height: Height,
+) -> Result<HandleResponse, StdError> {
+    if me.latest_height.unwrap() != initial_height {
+        return Err(StdError::generic_err(format!(
+            "substitute client revision number must equal initial height revision number ({} != {})",
+            me.latest_height.unwrap(), initial_height
+        )));
+    }
+
+    let light_subject_client_state: LightClientState =
+        from_base64_rlp(&me.data, "msg.light_subject_client_state")?;
+    let light_substitute_client_state: LightClientState = from_base64_rlp(
+        &substitute_client_state.data,
+        "msg.light_substitute_client_state",
+    )?;
+
+    if light_substitute_client_state != light_subject_client_state {
+        return Err(StdError::generic_err(
+            "subject client state does not match substitute client state",
+        ));
+    }
+
+    let current_timestamp: u64 = env.block.time;
+    let mut new_client_state = me.clone();
+
+    if me.frozen && me.frozen_height.is_some() {
+        if light_subject_client_state.allow_update_after_misbehavior {
+            return Err(StdError::generic_err(
+                "client is not allowed to be unfrozen",
+            ));
+        }
+
+        new_client_state.frozen = false;
+        new_client_state.frozen_height = None;
+    } else if is_expired(
+        current_timestamp,
+        subject_consensus_state.timestamp,
+        &light_subject_client_state,
+    ) {
+        if !light_subject_client_state.allow_update_after_expiry {
+            return Err(StdError::generic_err(
+                "client is not allowed to be unexpired",
+            ));
+        }
+    }
+
+    // Copy consensus states
+    let mut to_be_copied = Vec::new();
+    let latest_height = substitute_client_state.latest_height.unwrap();
+
+    for i in initial_height.revision_height..latest_height.revision_height + 1 {
+        to_be_copied.push(Height {
+            revision_height: i,
+            revision_number: latest_height.revision_number,
+        });
+    }
+
+    wrap_response(
+        &CheckSubstituteAndUpdateStateResultPre {
+            result: ClientStateCallResponseResult::success(),
+            new_client_state,
+            heights: to_be_copied,
+        },
+        "check_substitute_and_update_state_pre",
+    )
+}
+
+fn check_substitute_client_state_post(
+    deps: DepsMut,
+    env: Env,
+    me: ClientState,
+    _substitute_client_state: ClientState,
+    latest_consensus_state: ConsensusState,
+    _initial_height: Height,
+    status: Vec<CheckSubstituteAndUpdateStateStatus>,
+) -> Result<HandleResponse, StdError> {
+    let current_timestamp: u64 = env.block.time;
+
+    // Setup processed time
+    for entry in status {
+        if !entry.success {
+            continue;
+        }
+
+        let processed_time = get_processed_time(deps.storage, entry.height);
+        if processed_time.is_ok() {
+            set_processed_time(deps.storage, entry.height, processed_time.unwrap())?;
+        }
+    }
+
+    // Unmarshal state entry
+    let light_consensus_state: LightConsensusState =
+        from_base64_rlp(&latest_consensus_state.data, "msg.light_consensus_state")?;
+
+    // Unmarshal state config
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
+
+    if is_expired(
+        current_timestamp,
+        light_consensus_state.timestamp,
+        &light_client_state,
+    ) {
+        return Err(StdError::generic_err("updated subject client is expired"));
+    }
+
+    wrap_response(
+        &CheckSubstituteAndUpdateStateResultPost {
+            result: ClientStateCallResponseResult::success(),
+            new_client_state: me,
+        },
+        "check_substitute_and_update_state_post",
+    )
+}
+
+fn status(
+    _deps: DepsMut,
+    env: Env,
+    me: ClientState,
+    consensus_state: ConsensusState,
+) -> Result<HandleResponse, StdError> {
+    let current_timestamp: u64 = env.block.time;
+    let mut status = Status::Active;
+
+    // Unmarshal state config
+    let light_client_state: LightClientState = from_base64_rlp(&me.data, "msg.light_client_state")?;
+
+    if me.frozen {
+        status = Status::Frozen;
+    } else {
+        // Unmarshal state entry
+        let light_consensus_state: LightConsensusState =
+            from_base64_rlp(&consensus_state.data, "msg.light_consensus_state")?;
+
+        if is_expired(
+            current_timestamp,
+            light_consensus_state.timestamp,
+            &light_client_state,
+        ) {
+            status = Status::Exipred;
+        }
+    }
+
+    // Build up the response
+    wrap_response(&StatusResult { status }, "status")
+}
+
 // verify_delay_period_passed will ensure that at least delayPeriod amount of time has passed since consensus state was submitted
 // before allowing verification to continue
 fn verify_delay_period_passed(
@@ -1105,6 +1324,14 @@ fn construct_upgrade_merkle_path(
     result.push(appended_key);
 
     MerklePath { key_path: result }
+}
+
+fn is_expired(
+    current_timestamp: u64,
+    latest_timestamp: u64,
+    light_client_state: &LightClientState,
+) -> bool {
+    latest_timestamp + light_client_state.trusting_period > current_timestamp
 }
 
 #[cfg(test)]

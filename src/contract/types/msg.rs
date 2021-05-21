@@ -1,6 +1,6 @@
 use crate::contract::types::ibc::{Channel, ConnectionEnd, Height, MerklePrefix};
 use crate::contract::types::wasm::{
-    ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour, WasmHeader,
+    ClientState, ConsensusState, CosmosClientState, CosmosConsensusState, Misbehaviour, WasmHeader, Status
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,18 @@ pub enum HandleMsg {
         next_sequence_recv: u64,
         consensus_state: ConsensusState,
     },
+    CheckSubstituteAndUpdateState {
+        me: ClientState,
+        substitute_client_state: ClientState,
+        consensus_state: ConsensusState,
+        initial_height: Height,
+        phase: CheckSubstituteAndUpdateStatePhase,
+        status: Vec<CheckSubstituteAndUpdateStateStatus>
+    },
+    Status {
+        me: ClientState,
+        consensus_state: ConsensusState,
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
@@ -199,6 +211,36 @@ pub struct VerifyPacketAcknowledgementResult {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
 pub struct VerifyPacketReceiptAbsenceResult {
     pub result: ClientStateCallResponseResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct CheckSubstituteAndUpdateStateResultPre {
+    pub result: ClientStateCallResponseResult,
+    pub new_client_state: ClientState,
+    pub heights: Vec<Height>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct CheckSubstituteAndUpdateStateResultPost {
+    pub result: ClientStateCallResponseResult,
+    pub new_client_state: ClientState,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct CheckSubstituteAndUpdateStateStatus {
+   pub success: bool,
+   pub height: Height,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub enum CheckSubstituteAndUpdateStatePhase {
+    Pre,
+    Post
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub struct StatusResult {
+    pub status: Status,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]

@@ -52,3 +52,11 @@ pub struct Misbehaviour {
     pub header_1: WasmHeader,
     pub header_2: WasmHeader,
 }
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, JsonSchema)]
+pub enum Status {
+    Active,
+    Frozen,
+    Exipred,
+    Unknown
+}
